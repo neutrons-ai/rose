@@ -92,7 +92,7 @@ pytest -v                           # Verbose output
 
 ## 📄 License
 
-MIT License - see [LICENSE](LICENSE) file for details.
+BSD 3-Clause License - see [LICENSE](LICENSE) file for details.
 
 ---
 
