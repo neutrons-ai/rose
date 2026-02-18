@@ -44,8 +44,10 @@ print(result)
 
 ## Dependencies
 <!-- Any specific libraries you know you'll need? (e.g., pandas, numpy, matplotlib) -->
-
-- 
+- If you are building a web application, use flask and bootstrap.
+- If you are building an API, use FastAPI.
+- If you are building an MCP server, use FastMCP.
+- For CLI, use click.
 
 
 ## Technical Notes
