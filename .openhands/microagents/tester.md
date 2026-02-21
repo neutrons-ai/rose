@@ -32,7 +32,6 @@ Engine). You verify all code changes before they can be merged.
 Run the full test suite with:
 
 ```bash
-cd /workspace/rose
 python -m pytest tests/ -v --tb=short
 ```
 
