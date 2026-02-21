@@ -1,14 +1,37 @@
 PM, you are managing the ROSE project (Reflectivity Open Science Engine), an automated neutron reflectivity analysis tool (AuRE v2).
 
-IMPORTANT: The project files are mounted at /workspace. Run this first:
-  cd /workspace
+## Step 0 — Workspace check (do this FIRST, before anything else)
 
-Your microagent instructions are in /workspace/.openhands/microagents/pm.md — read them now.
+Run these commands and report what you see:
 
-The full project plan and reference data are in /workspace/docs/project.md — read that too.
+```bash
+echo "=== CWD ===" && pwd
+echo "=== /workspace contents ===" && ls /workspace/
+echo "=== Check key files ===" && ls /workspace/pyproject.toml /workspace/docs/project.md /workspace/.openhands/microagents/pm.md
+```
+
+If all three files exist under /workspace/, run:
+```bash
+cd /workspace
+```
+Then continue to Step 1.
+
+If the files are NOT at /workspace/, check /workspace/project/:
+```bash
+ls /workspace/project/pyproject.toml 2>/dev/null && cd /workspace/project
+```
+
+Report your CWD and the listing before continuing. Do NOT proceed until you confirm you can see pyproject.toml, docs/, and .openhands/ in your working directory.
+
+## Step 1 — Read your instructions
+
+Read your microagent instructions: .openhands/microagents/pm.md
+Read the project plan: docs/project.md
+
+## Step 2 — Create an implementation plan
 
 The project is already scaffolded with a Python package in src/rose/, tests in tests/, and a CLI entry point in src/rose/cli.py.
 
-Your first task: review the project plan in docs/project.md and create a detailed, phased implementation plan. Break it into tasks suitable for dev-alpha (core algorithms, scientific computation) and dev-beta (I/O, data pipelines, CLI). Identify what the tester needs to verify at each phase.
+Review the project plan in docs/project.md and create a detailed, phased implementation plan. Break it into tasks suitable for dev-alpha (core algorithms, scientific computation) and dev-beta (I/O, data pipelines, CLI). Identify what the tester needs to verify at each phase.
 
 Do not start coding yet — present the plan for my approval first.
