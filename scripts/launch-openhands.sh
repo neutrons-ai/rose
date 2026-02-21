@@ -53,20 +53,38 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# Ensure iptables DNAT so containers can reach localhost LLM
+# Expose localhost LLM to Docker containers via socat (no sudo required)
 # ---------------------------------------------------------------------------
+# Containers resolve host.docker.internal → docker bridge IP (172.17.0.1).
+# If the LLM only listens on 127.0.0.1, containers can't reach it.
+# socat forwards 172.17.0.1:PORT → 127.0.0.1:PORT in userspace.
 
 LLM_PORT=$(echo "${LLM_BASE_URL}" | grep -oP ':\K[0-9]+(?=/)')
-if [[ -n "${LLM_PORT}" ]]; then
-    if ! sudo iptables -t nat -C PREROUTING -i docker0 -p tcp --dport "${LLM_PORT}" \
-         -j DNAT --to-destination 127.0.0.1:"${LLM_PORT}" 2>/dev/null; then
-        echo "  🔧 Adding iptables DNAT rule for port ${LLM_PORT}..."
-        sudo sysctl -w net.ipv4.conf.docker0.route_localnet=1 >/dev/null
-        sudo iptables -t nat -A PREROUTING -i docker0 -p tcp --dport "${LLM_PORT}" \
-             -j DNAT --to-destination 127.0.0.1:"${LLM_PORT}"
+DOCKER_BRIDGE_IP=$(ip -4 addr show docker0 2>/dev/null | grep -oP 'inet \K[\d.]+')
+
+if [[ -n "${LLM_PORT}" && -n "${DOCKER_BRIDGE_IP}" ]]; then
+    # Check if something already listens on the bridge IP (socat or LLM itself)
+    if ss -tlnp 2>/dev/null | grep -q "${DOCKER_BRIDGE_IP}:${LLM_PORT}"; then
+        echo "  ✅ LLM already reachable on ${DOCKER_BRIDGE_IP}:${LLM_PORT}"
+    elif command -v socat &>/dev/null; then
+        echo "  🔧 Starting socat forwarder: ${DOCKER_BRIDGE_IP}:${LLM_PORT} → 127.0.0.1:${LLM_PORT}"
+        socat "TCP-LISTEN:${LLM_PORT},bind=${DOCKER_BRIDGE_IP},reuseaddr,fork" \
+              "TCP:127.0.0.1:${LLM_PORT}" &
+        SOCAT_PID=$!
+        # Give it a moment to bind
+        sleep 0.3
+        if kill -0 "${SOCAT_PID}" 2>/dev/null; then
+            echo "  ✅ socat forwarder running (PID ${SOCAT_PID})"
+            # Clean up socat when the script exits
+            trap "kill ${SOCAT_PID} 2>/dev/null" EXIT
+        else
+            echo "  ⚠️  socat failed to start — containers may not reach LLM"
+        fi
+    else
+        echo "  ⚠️  socat not found. Install it (apt install socat) or bind your LLM to 0.0.0.0"
     fi
-    echo "  ✅ iptables DNAT OK for port ${LLM_PORT}"
 fi
+
 
 echo ""
 
