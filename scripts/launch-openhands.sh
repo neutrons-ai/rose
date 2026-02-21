@@ -1,18 +1,13 @@
 #!/usr/bin/env bash
 # launch-openhands.sh — Start OpenHands for the ROSE project
 #
-# Uses the officially recommended approach from:
-# https://docs.openhands.dev/openhands/usage/run-openhands/local-setup#linux
-#
 # Usage:
-#   ./scripts/launch-openhands.sh          # Use uv (recommended)
-#   ./scripts/launch-openhands.sh docker   # Use Docker directly
+#   ./scripts/launch-openhands.sh
 #
 # Prerequisites:
-#   - Docker Engine running (native, not Docker Desktop)
+#   - Docker Engine running
 #   - Local LLM server running at http://localhost:8555/v1
-#
-# The script will install uv and openhands if needed.
+#   - openhands installed:  uv tool install openhands --python 3.12
 
 set -euo pipefail
 
@@ -20,26 +15,10 @@ set -euo pipefail
 # Configuration (override via environment variables)
 # ---------------------------------------------------------------------------
 
-# Local LLM server endpoint (as seen from inside the container)
 LLM_BASE_URL="${LLM_BASE_URL:-http://host.docker.internal:8555/v1}"
-
-# Model identifier
 LLM_MODEL="${LLM_MODEL:-openai/gpt-oss-120b}"
-
-# API key (local servers typically don't need one, but OpenHands requires a value)
 LLM_API_KEY="${LLM_API_KEY:-not-needed}"
-
-# OpenHands version
-OPENHANDS_VERSION="${OPENHANDS_VERSION:-1.4}"
-
-# Port for the web UI
-OPENHANDS_PORT="${OPENHANDS_PORT:-3000}"
-
-# Project directory (this repo)
 PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-
-# Launch method: "uv" (default) or "docker"
-METHOD="${1:-uv}"
 
 # ---------------------------------------------------------------------------
 # Pre-flight checks
@@ -48,219 +27,116 @@ METHOD="${1:-uv}"
 echo "🔍 Pre-flight checks..."
 
 if ! command -v docker &>/dev/null; then
-    echo "❌ Docker is not installed or not in PATH."
-    exit 1
+    echo "❌ Docker is not installed."; exit 1
 fi
-
 if ! docker info &>/dev/null 2>&1; then
-    echo "❌ Docker daemon is not running."
-    echo "   Try: sudo systemctl start docker"
-    exit 1
+    echo "❌ Docker daemon is not running.  Try: sudo systemctl start docker"; exit 1
+fi
+if ! command -v openhands &>/dev/null; then
+    echo "❌ openhands not found.  Install with: uv tool install openhands --python 3.12"; exit 1
 fi
 
-# Ensure we're using the native Docker Engine, not Docker Desktop
-DOCKER_CONTEXT=$(docker context show 2>/dev/null || echo "unknown")
-if [[ "${DOCKER_CONTEXT}" == "desktop-linux" ]]; then
-    echo "⚠️  Switching from Docker Desktop to native Docker Engine..."
+# Switch away from Docker Desktop if needed
+DOCKER_CTX=$(docker context show 2>/dev/null || echo "unknown")
+if [[ "${DOCKER_CTX}" == "desktop-linux" ]]; then
+    echo "⚠️  Switching to native Docker Engine..."
     docker context use default
-    if ! docker info &>/dev/null 2>&1; then
-        echo "❌ Native Docker Engine is not running."
-        echo "   Try: sudo systemctl start docker"
-        exit 1
-    fi
+fi
+echo "  ✅ Docker OK (context: $(docker context show 2>/dev/null))"
+
+# Check LLM reachability
+HOST_URL="$(echo "${LLM_BASE_URL}" | sed 's|host.docker.internal|localhost|')"
+if curl --silent --max-time 3 "${HOST_URL}/models" >/dev/null 2>&1; then
+    echo "  ✅ LLM server reachable at ${HOST_URL}"
+else
+    echo "  ⚠️  LLM server not reachable at ${HOST_URL}"
 fi
 
-echo "  ✅ Docker is available (context: $(docker context show 2>/dev/null))"
+# ---------------------------------------------------------------------------
+# Ensure iptables DNAT so containers can reach localhost LLM
+# ---------------------------------------------------------------------------
 
-# Check if LLM server is reachable from the host
-HOST_LLM_URL="$(echo "${LLM_BASE_URL}" | sed 's|host.docker.internal|localhost|')"
-if command -v curl &>/dev/null; then
-    if curl --silent --max-time 3 "${HOST_LLM_URL}/models" >/dev/null 2>&1; then
-        echo "  ✅ LLM server is reachable at ${HOST_LLM_URL}"
-    else
-        echo "  ⚠️  LLM server not reachable at ${HOST_LLM_URL}"
-        echo "     Make sure your local LLM server is running before using OpenHands."
+LLM_PORT=$(echo "${LLM_BASE_URL}" | grep -oP ':\K[0-9]+(?=/)')
+if [[ -n "${LLM_PORT}" ]]; then
+    if ! sudo iptables -t nat -C PREROUTING -i docker0 -p tcp --dport "${LLM_PORT}" \
+         -j DNAT --to-destination 127.0.0.1:"${LLM_PORT}" 2>/dev/null; then
+        echo "  🔧 Adding iptables DNAT rule for port ${LLM_PORT}..."
+        sudo sysctl -w net.ipv4.conf.docker0.route_localnet=1 >/dev/null
+        sudo iptables -t nat -A PREROUTING -i docker0 -p tcp --dport "${LLM_PORT}" \
+             -j DNAT --to-destination 127.0.0.1:"${LLM_PORT}"
     fi
+    echo "  ✅ iptables DNAT OK for port ${LLM_PORT}"
 fi
 
 echo ""
 
 # ---------------------------------------------------------------------------
-# Pre-write settings so OpenHands skips the setup wizard
+# Write ~/.openhands/settings.json  (skips the setup wizard)
 # ---------------------------------------------------------------------------
 
 SETTINGS_DIR="$HOME/.openhands"
-SETTINGS_FILE="${SETTINGS_DIR}/settings.json"
 mkdir -p "${SETTINGS_DIR}"
 
-# Write settings with correct LLM config so the UI is ready to go
-python3 -c "
-import json, os
-
-path = '${SETTINGS_FILE}'
-
-# Load existing settings or start fresh
-settings = {}
-if os.path.exists(path):
-    try:
-        with open(path) as f:
-            settings = json.load(f)
-    except (json.JSONDecodeError, IOError):
-        pass
-
-# Apply required LLM / agent settings
-settings.update({
-    'language': settings.get('language', 'en'),
-    'agent': settings.get('agent', 'CodeActAgent'),
-    'llm_model': '${LLM_MODEL}',
-    'llm_api_key': '${LLM_API_KEY}',
-    'llm_base_url': '${LLM_BASE_URL}',
-    'enable_default_condenser': True,
-    'v1_enabled': False,
-})
-
-with open(path, 'w') as f:
-    json.dump(settings, f, indent=2)
-"
-echo "  ✅ Settings written to ${SETTINGS_FILE}"
+cat > "${SETTINGS_DIR}/settings.json" <<EOF
+{
+  "language": "en",
+  "agent": "CodeActAgent",
+  "llm_model": "${LLM_MODEL}",
+  "llm_api_key": "${LLM_API_KEY}",
+  "llm_base_url": "${LLM_BASE_URL}",
+  "enable_default_condenser": true,
+  "v1_enabled": false
+}
+EOF
+echo "  ✅ ${SETTINGS_DIR}/settings.json"
 
 # ---------------------------------------------------------------------------
-# Create config.toml to disable native tool calling
-# Local LLM servers (TRT-LLM, vLLM) reject the OpenAI tool message format:
-#   - 'name' field on tool messages not permitted
-#   - 'content' must be a string (not array)
-# Disabling native tool calling makes OpenHands embed tool descriptions in
-# the system prompt and use text-based tool responses instead.
-# NOTE: This only works in V0 mode (v1_enabled=false in settings.json).
-#   V1's SDK ignores config.toml and always uses native tool calling.
+# Write ~/.openhands/config.toml  (disable native tool calling for local LLM)
 # ---------------------------------------------------------------------------
 
-CONFIG_TOML="${SETTINGS_DIR}/config.toml"
-cat > "${CONFIG_TOML}" <<'TOML'
+cat > "${SETTINGS_DIR}/config.toml" <<'TOML'
 [llm]
 native_tool_calling = false
 TOML
-echo "  ✅ Config written to ${CONFIG_TOML} (native_tool_calling=false)"
+echo "  ✅ ${SETTINGS_DIR}/config.toml"
 echo ""
 
 # ---------------------------------------------------------------------------
-# Pre-create sandbox working directories
-# The repo is mounted at /workspace/project.  The sandbox may write
-# conversations/ and bash_events/ there.  The sandbox user may differ
-# from the host user, so pre-create with open permissions.  (.gitignore'd)
+# Show the startup prompt
 # ---------------------------------------------------------------------------
 
-mkdir -p "${PROJECT_DIR}/conversations" "${PROJECT_DIR}/bash_events"
-chmod 777 "${PROJECT_DIR}/conversations" "${PROJECT_DIR}/bash_events"
-
-# ---------------------------------------------------------------------------
-# Show startup prompt
-# ---------------------------------------------------------------------------
-
-show_prompt() {
-    local PROMPT_FILE="${PROJECT_DIR}/scripts/startup-prompt.txt"
-    if [[ -f "${PROMPT_FILE}" ]]; then
-        echo ""
-        echo "� To start a conversation:"
-        echo "   1. Click \"+ New Conversation\""
-        echo "   2. Choose \"Start from scratch\" (the repo is mounted at /workspace/project)"
-        echo "   3. Paste the prompt below into the chat"
-        echo ""
-        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-        cat "${PROMPT_FILE}"
-        echo ""
-        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-        echo ""
-        echo "💡 The prompt is also at: scripts/startup-prompt.txt"
-        # Copy to clipboard if possible
-        if command -v xclip &>/dev/null; then
-            cat "${PROMPT_FILE}" | xclip -selection clipboard
-            echo "📎 Copied to clipboard!"
-        elif command -v xsel &>/dev/null; then
-            cat "${PROMPT_FILE}" | xsel --clipboard
-            echo "📎 Copied to clipboard!"
-        fi
-    fi
-}
-
-# ---------------------------------------------------------------------------
-# Launch
-# ---------------------------------------------------------------------------
-
-if [[ "${METHOD}" == "uv" ]]; then
-    # -----------------------------------------------------------------------
-    # Option 1: uv (Recommended by OpenHands docs)
-    # -----------------------------------------------------------------------
-
-    # Install uv if needed
-    if ! command -v uv &>/dev/null; then
-        echo "📦 Installing uv..."
-        curl -LsSf https://astral.sh/uv/install.sh | sh
-        export PATH="$HOME/.local/bin:$PATH"
-    fi
-
-    # Install openhands if needed
-    if ! uv tool list 2>/dev/null | grep -q openhands; then
-        echo "📦 Installing openhands via uv..."
-        uv tool install openhands --python 3.12
-    fi
-
-    echo "🚀 Launching OpenHands (via uv)..."
-    echo "   UI:        http://localhost:${OPENHANDS_PORT}"
-    echo "   LLM URL:   ${LLM_BASE_URL}  (inside container)"
-    echo "   LLM Model: ${LLM_MODEL}"
-    echo "   Workspace: ${PROJECT_DIR}"
-    echo "   Settings:  auto-configured ✅"
+PROMPT_FILE="${PROJECT_DIR}/scripts/startup-prompt.txt"
+if [[ -f "${PROMPT_FILE}" ]]; then
+    echo "📋 To start a conversation:"
+    echo "   1. Click  \"+ New Conversation\""
+    echo "   2. Choose \"Start from scratch\""
+    echo "   3. Paste the prompt below into the chat"
     echo ""
-
-    show_prompt
-
-    # Mount the project at /workspace/project — this is where OpenHands
-    # sets the agent's CWD (FileEditor, Terminal both use /workspace/project).
-    # Do NOT use --mount-cwd (it mounts to /workspace which is wrong).
-    export SANDBOX_VOLUMES="${PROJECT_DIR}:/workspace/project:rw"
-    openhands serve
-
-elif [[ "${METHOD}" == "docker" ]]; then
-    # -----------------------------------------------------------------------
-    # Option 2: Docker directly (from official docs)
-    # -----------------------------------------------------------------------
-
-    echo "🚀 Launching OpenHands (via Docker)..."
-    echo "   Version:   ${OPENHANDS_VERSION}"
-    echo "   UI:        http://localhost:${OPENHANDS_PORT}"
-    echo "   LLM URL:   ${LLM_BASE_URL}  (inside container)"
-    echo "   LLM Model: ${LLM_MODEL}"
-    echo "   Workspace: ${PROJECT_DIR}"
-    echo "   Settings:  auto-configured ✅"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    cat "${PROMPT_FILE}"
     echo ""
-
-    # Stop any existing container
-    docker stop openhands-app 2>/dev/null || true
-    docker rm openhands-app 2>/dev/null || true
-
-    # Migrate state directory if needed (per docs: v0.44+ uses ~/.openhands)
-    if [[ -d "$HOME/.openhands-state" ]] && [[ ! -d "$HOME/.openhands" ]]; then
-        echo "   Migrating state: ~/.openhands-state → ~/.openhands"
-        mv "$HOME/.openhands-state" "$HOME/.openhands"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
+    # Copy to clipboard if possible
+    if command -v xclip &>/dev/null; then
+        xclip -selection clipboard < "${PROMPT_FILE}"
+        echo "📎 Copied to clipboard!"
+    elif command -v xsel &>/dev/null; then
+        xsel --clipboard < "${PROMPT_FILE}"
+        echo "📎 Copied to clipboard!"
     fi
-    mkdir -p "$HOME/.openhands"
-
-    show_prompt
-
-    docker run -it --rm --pull=always \
-        --name openhands-app \
-        --add-host host.docker.internal:host-gateway \
-        -e LOG_ALL_EVENTS=true \
-        -e SANDBOX_VOLUMES="${PROJECT_DIR}:/workspace/project:rw" \
-        -e SANDBOX_USER_ID="$(id -u)" \
-        -v /var/run/docker.sock:/var/run/docker.sock \
-        -v "$HOME/.openhands:/.openhands" \
-        -p "${OPENHANDS_PORT}:3000" \
-        "docker.openhands.dev/openhands/openhands:${OPENHANDS_VERSION}"
-
-else
-    echo "❌ Unknown method: ${METHOD}"
-    echo "   Usage: $0 [uv|docker]"
-    exit 1
+    echo ""
 fi
+
+# ---------------------------------------------------------------------------
+# Launch:  cd into the project and use --mount-cwd
+# ---------------------------------------------------------------------------
+
+echo "🚀 Launching OpenHands..."
+echo "   UI:        http://localhost:3000"
+echo "   LLM:       ${LLM_MODEL} @ ${LLM_BASE_URL}"
+echo "   Workspace: ${PROJECT_DIR}  →  /workspace (inside sandbox)"
+echo ""
+
+cd "${PROJECT_DIR}"
+exec openhands serve --mount-cwd
