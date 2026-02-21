@@ -116,20 +116,38 @@ settings.update({
     'llm_api_key': '${LLM_API_KEY}',
     'llm_base_url': '${LLM_BASE_URL}',
     'enable_default_condenser': True,
-    'v1_enabled': True,
+    'v1_enabled': False,
 })
 
 with open(path, 'w') as f:
     json.dump(settings, f, indent=2)
 "
 echo "  ✅ Settings written to ${SETTINGS_FILE}"
+
+# ---------------------------------------------------------------------------
+# Create config.toml to disable native tool calling
+# Local LLM servers (TRT-LLM, vLLM) reject the OpenAI tool message format:
+#   - 'name' field on tool messages not permitted
+#   - 'content' must be a string (not array)
+# Disabling native tool calling makes OpenHands embed tool descriptions in
+# the system prompt and use text-based tool responses instead.
+# NOTE: This only works in V0 mode (v1_enabled=false in settings.json).
+#   V1's SDK ignores config.toml and always uses native tool calling.
+# ---------------------------------------------------------------------------
+
+CONFIG_TOML="${SETTINGS_DIR}/config.toml"
+cat > "${CONFIG_TOML}" <<'TOML'
+[llm]
+native_tool_calling = false
+TOML
+echo "  ✅ Config written to ${CONFIG_TOML} (native_tool_calling=false)"
 echo ""
 
 # ---------------------------------------------------------------------------
 # Pre-create sandbox working directories
-# OpenHands sandbox writes conversations/ and bash_events/ inside the
-# mounted workspace.  The sandbox user may differ from the host user,
-# so we create them with open permissions.  They are in .gitignore.
+# The repo is mounted at /workspace/project.  The sandbox may write
+# conversations/ and bash_events/ there.  The sandbox user may differ
+# from the host user, so pre-create with open permissions.  (.gitignore'd)
 # ---------------------------------------------------------------------------
 
 mkdir -p "${PROJECT_DIR}/conversations" "${PROJECT_DIR}/bash_events"
@@ -145,7 +163,7 @@ show_prompt() {
         echo ""
         echo "� To start a conversation:"
         echo "   1. Click \"+ New Conversation\""
-        echo "   2. Choose \"Start from scratch\" (the repo is already mounted at /workspace)"
+        echo "   2. Choose \"Start from scratch\" (the repo is mounted at /workspace/project)"
         echo "   3. Paste the prompt below into the chat"
         echo ""
         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -197,9 +215,11 @@ if [[ "${METHOD}" == "uv" ]]; then
 
     show_prompt
 
-    # Launch from the project directory so --mount-cwd picks it up
-    cd "${PROJECT_DIR}"
-    openhands serve --mount-cwd
+    # Mount the project at /workspace/project — this is where OpenHands
+    # sets the agent's CWD (FileEditor, Terminal both use /workspace/project).
+    # Do NOT use --mount-cwd (it mounts to /workspace which is wrong).
+    export SANDBOX_VOLUMES="${PROJECT_DIR}:/workspace/project:rw"
+    openhands serve
 
 elif [[ "${METHOD}" == "docker" ]]; then
     # -----------------------------------------------------------------------
@@ -232,7 +252,7 @@ elif [[ "${METHOD}" == "docker" ]]; then
         --name openhands-app \
         --add-host host.docker.internal:host-gateway \
         -e LOG_ALL_EVENTS=true \
-        -e SANDBOX_VOLUMES="${PROJECT_DIR}:/workspace:rw" \
+        -e SANDBOX_VOLUMES="${PROJECT_DIR}:/workspace/project:rw" \
         -e SANDBOX_USER_ID="$(id -u)" \
         -v /var/run/docker.sock:/var/run/docker.sock \
         -v "$HOME/.openhands:/.openhands" \
