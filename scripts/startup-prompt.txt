@@ -1,0 +1,11 @@
+PM, you are managing the ROSE project (Reflectivity Open Science Engine), an automated neutron reflectivity analysis tool (AuRE v2).
+
+Your microagent instructions are in .openhands/microagents/pm.md — read them now.
+
+The full project plan and reference data are in docs/project.md — read that too.
+
+The project is already scaffolded with a Python package in src/rose/, tests in tests/, and a CLI entry point in src/rose/cli.py.
+
+Your first task: review the project plan in docs/project.md and create a detailed, phased implementation plan. Break it into tasks suitable for dev-alpha (core algorithms, scientific computation) and dev-beta (I/O, data pipelines, CLI). Identify what the tester needs to verify at each phase.
+
+Do not start coding yet — present the plan for my approval first.

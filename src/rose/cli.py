@@ -1,12 +1,12 @@
 """
-Command-line interface for package_name.
+Command-line interface for rose.
 
 A simple example CLI to demonstrate how to create command-line tools.
 Replace this with your own commands as you build your package.
 
 Example usage:
-    $ python -m package_name.cli
-    $ python -m package_name.cli --name "World"
+    $ python -m rose.cli
+    $ python -m rose.cli --name "World"
 """
 
 import click
@@ -23,8 +23,8 @@ def main(name: str):
     Replace this with your actual functionality!
 
     Example:
-        python -m package_name.cli
-        python -m package_name.cli --name "Copilot"
+        python -m rose.cli
+        python -m rose.cli --name "Copilot"
     """
     click.echo(f"Hello, {name}! 👋")
     click.echo("\nThis is a template CLI. Replace it with your own commands!")
