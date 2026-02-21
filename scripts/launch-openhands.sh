@@ -86,6 +86,56 @@ fi
 echo ""
 
 # ---------------------------------------------------------------------------
+# Pre-write settings so OpenHands skips the setup wizard
+# ---------------------------------------------------------------------------
+
+SETTINGS_DIR="$HOME/.openhands"
+SETTINGS_FILE="${SETTINGS_DIR}/settings.json"
+mkdir -p "${SETTINGS_DIR}"
+
+# Write settings with correct LLM config so the UI is ready to go
+python3 -c "
+import json, os
+
+path = '${SETTINGS_FILE}'
+
+# Load existing settings or start fresh
+settings = {}
+if os.path.exists(path):
+    try:
+        with open(path) as f:
+            settings = json.load(f)
+    except (json.JSONDecodeError, IOError):
+        pass
+
+# Apply required LLM / agent settings
+settings.update({
+    'language': settings.get('language', 'en'),
+    'agent': settings.get('agent', 'CodeActAgent'),
+    'llm_model': '${LLM_MODEL}',
+    'llm_api_key': '${LLM_API_KEY}',
+    'llm_base_url': '${LLM_BASE_URL}',
+    'enable_default_condenser': True,
+    'v1_enabled': True,
+})
+
+with open(path, 'w') as f:
+    json.dump(settings, f, indent=2)
+"
+echo "  ✅ Settings written to ${SETTINGS_FILE}"
+echo ""
+
+# ---------------------------------------------------------------------------
+# Pre-create sandbox working directories
+# OpenHands sandbox writes conversations/ and bash_events/ inside the
+# mounted workspace.  The sandbox user may differ from the host user,
+# so we create them with open permissions.  They are in .gitignore.
+# ---------------------------------------------------------------------------
+
+mkdir -p "${PROJECT_DIR}/conversations" "${PROJECT_DIR}/bash_events"
+chmod 777 "${PROJECT_DIR}/conversations" "${PROJECT_DIR}/bash_events"
+
+# ---------------------------------------------------------------------------
 # Show startup prompt
 # ---------------------------------------------------------------------------
 
@@ -93,7 +143,11 @@ show_prompt() {
     local PROMPT_FILE="${PROJECT_DIR}/scripts/startup-prompt.txt"
     if [[ -f "${PROMPT_FILE}" ]]; then
         echo ""
-        echo "📋 Paste this into the OpenHands chat to start:"
+        echo "� To start a conversation:"
+        echo "   1. Click \"+ New Conversation\""
+        echo "   2. Choose \"Start from scratch\" (the repo is already mounted at /workspace)"
+        echo "   3. Paste the prompt below into the chat"
+        echo ""
         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
         cat "${PROMPT_FILE}"
         echo ""
@@ -138,11 +192,7 @@ if [[ "${METHOD}" == "uv" ]]; then
     echo "   LLM URL:   ${LLM_BASE_URL}  (inside container)"
     echo "   LLM Model: ${LLM_MODEL}"
     echo "   Workspace: ${PROJECT_DIR}"
-    echo ""
-    echo "   Configure in the UI Settings (LLM tab, enable Advanced):"
-    echo "     • Custom Model → ${LLM_MODEL}"
-    echo "     • Base URL     → ${LLM_BASE_URL}"
-    echo "     • API Key      → ${LLM_API_KEY}"
+    echo "   Settings:  auto-configured ✅"
     echo ""
 
     show_prompt
@@ -162,11 +212,7 @@ elif [[ "${METHOD}" == "docker" ]]; then
     echo "   LLM URL:   ${LLM_BASE_URL}  (inside container)"
     echo "   LLM Model: ${LLM_MODEL}"
     echo "   Workspace: ${PROJECT_DIR}"
-    echo ""
-    echo "   Configure in the UI Settings (LLM tab, enable Advanced):"
-    echo "     • Custom Model → ${LLM_MODEL}"
-    echo "     • Base URL     → ${LLM_BASE_URL}"
-    echo "     • API Key      → ${LLM_API_KEY}"
+    echo "   Settings:  auto-configured ✅"
     echo ""
 
     # Stop any existing container
@@ -186,9 +232,10 @@ elif [[ "${METHOD}" == "docker" ]]; then
         --name openhands-app \
         --add-host host.docker.internal:host-gateway \
         -e LOG_ALL_EVENTS=true \
+        -e SANDBOX_VOLUMES="${PROJECT_DIR}:/workspace:rw" \
+        -e SANDBOX_USER_ID="$(id -u)" \
         -v /var/run/docker.sock:/var/run/docker.sock \
         -v "$HOME/.openhands:/.openhands" \
-        -v "${PROJECT_DIR}:/opt/workspace_base" \
         -p "${OPENHANDS_PORT}:3000" \
         "docker.openhands.dev/openhands/openhands:${OPENHANDS_VERSION}"
 
