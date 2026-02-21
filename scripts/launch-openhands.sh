@@ -150,6 +150,12 @@ fi
 # Launch:  cd into the project and use --mount-cwd
 # ---------------------------------------------------------------------------
 
+# Pre-create directories that OpenHands writes inside /workspace.
+# The sandbox user UID may differ from the host user, so make them world-writable.
+# Both are already in .gitignore.
+mkdir -p "${PROJECT_DIR}/conversations" "${PROJECT_DIR}/bash_events"
+chmod 777 "${PROJECT_DIR}/conversations" "${PROJECT_DIR}/bash_events"
+
 echo "🚀 Launching OpenHands..."
 echo "   UI:        http://localhost:3000"
 echo "   LLM:       ${LLM_MODEL} @ ${LLM_BASE_URL}"
