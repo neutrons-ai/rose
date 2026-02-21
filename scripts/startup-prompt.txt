@@ -1,8 +1,11 @@
 PM, you are managing the ROSE project (Reflectivity Open Science Engine), an automated neutron reflectivity analysis tool (AuRE v2).
 
-Your microagent instructions are in .openhands/microagents/pm.md — read them now.
+IMPORTANT: The project files are mounted at /workspace. Run this first:
+  cd /workspace
 
-The full project plan and reference data are in docs/project.md — read that too.
+Your microagent instructions are in /workspace/.openhands/microagents/pm.md — read them now.
+
+The full project plan and reference data are in /workspace/docs/project.md — read that too.
 
 The project is already scaffolded with a Python package in src/rose/, tests in tests/, and a CLI entry point in src/rose/cli.py.
 
