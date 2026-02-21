@@ -116,7 +116,7 @@ has excellent documentation, and integrates well with the project structure.
 
 Itemized plan:
 1. Install click dependency
-2. Create src/package_name/cli.py
+2. Create src/rose/cli.py
 3. Add basic command structure
 4. Add --help documentation
 5. Test CLI functionality
@@ -238,7 +238,7 @@ Context for review:
 - Updated documentation
 
 Files changed:
-- src/package_name/core.py
+- src/rose/core.py
 - tests/test_core.py
 - docs/api-reference.md
 
@@ -277,7 +277,7 @@ experimental data from the XYZ instrument. Typical workflow:
 4. Export with save_processed_data()
 
 Example:
-    >>> from package_name import preprocessing
+    >>> from rose import preprocessing
     >>> data = preprocessing.load_data('experiment.csv')
     >>> clean = preprocessing.remove_outliers(data)
     >>> normalized = preprocessing.normalize_values(clean)
@@ -427,7 +427,7 @@ cleans up resources even if an error occurs."
 ### Flask Web App Pattern:
 ```python
 from flask import Flask, render_template, request
-from package_name.core import process_data
+from rose.core import process_data
 
 app = Flask(__name__)
 
@@ -448,7 +448,7 @@ def process():
 ```python
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-from package_name.core import process_data
+from rose.core import process_data
 
 app = FastAPI()
 
@@ -469,7 +469,7 @@ async def process_endpoint(request: DataRequest):
 ### Click CLI Pattern:
 ```python
 import click
-from package_name.core import process_data
+from rose.core import process_data
 
 @click.command()
 @click.argument('input_file', type=click.Path(exists=True))

@@ -3,16 +3,16 @@ requires = ["setuptools>=65.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "package-name"  # Change this to your package name
+name = "rose"
 version = "0.1.0"
-description = "A scientific data processing package"
+description = "ROSE - Reflectivity Open Science Engine: automated neutron reflectivity analysis (AuRE v2)"
 readme = "README.md"
 requires-python = ">=3.9"
 license = {text = "BSD-3-Clause"}
 authors = [
-    {name = "Your Name", email = "your.email@example.com"}
+    {name = "Neutrons AI Team"}
 ]
-keywords = ["science", "data", "processing"]
+keywords = ["neutron", "reflectivity", "thin-film", "analysis", "science", "automation"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Science/Research",
@@ -23,6 +23,7 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Topic :: Scientific/Engineering",
+    "Topic :: Scientific/Engineering :: Physics",
 ]
 
 # Core dependencies
@@ -80,24 +81,24 @@ docs = [
 
 # All optional dependencies
 all = [
-    "package-name[dev,web,api,cli,science,docs]",
+    "rose[dev,web,api,cli,science,docs]",
 ]
 
 [project.urls]
-Homepage = "https://github.com/yourusername/your-repo"
-Documentation = "https://github.com/yourusername/your-repo#readme"
-Repository = "https://github.com/yourusername/your-repo"
-Issues = "https://github.com/yourusername/your-repo/issues"
+Homepage = "https://github.com/neutrons-ai/rose"
+Documentation = "https://github.com/neutrons-ai/rose#readme"
+Repository = "https://github.com/neutrons-ai/rose"
+Issues = "https://github.com/neutrons-ai/rose/issues"
+AuRE-v1 = "https://github.com/neutrons-ai/aure"
 
 [project.scripts]
-# Command-line interface (uncomment and customize after implementing CLI)
-# your-package = "package_name.cli:main"
+rose = "rose.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
 [tool.setuptools.package-data]
-package_name = ["py.typed"]
+rose = ["py.typed"]
 
 # Pytest configuration
 [tool.pytest.ini_options]
@@ -108,12 +109,12 @@ python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
 addopts = [
-    "-ra",                      # Show summary of all test outcomes
-    "--strict-markers",         # Error on unknown markers
-    "--strict-config",          # Error on unknown config options
-    "--cov=src/package_name",   # Coverage for your package
-    "--cov-report=term-missing", # Show missing lines in coverage
-    "--cov-report=html",        # Generate HTML coverage report
+    "-ra",
+    "--strict-markers",
+    "--strict-config",
+    "--cov=src/rose",
+    "--cov-report=term-missing",
+    "--cov-report=html",
 ]
 markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
@@ -148,32 +149,32 @@ src = ["src", "tests"]
 
 [tool.ruff.lint]
 select = [
-    "E",      # pycodestyle errors
-    "W",      # pycodestyle warnings
-    "F",      # pyflakes
-    "I",      # isort
-    "B",      # flake8-bugbear
-    "C4",     # flake8-comprehensions
-    "UP",     # pyupgrade
-    "ARG",    # flake8-unused-arguments
-    "SIM",    # flake8-simplify
+    "E",
+    "W",
+    "F",
+    "I",
+    "B",
+    "C4",
+    "UP",
+    "ARG",
+    "SIM",
 ]
 ignore = [
-    "E501",   # line too long (handled by formatter)
-    "B008",   # do not perform function calls in argument defaults
-    "C901",   # too complex (let developers decide)
-    "W191",   # indentation contains tabs
+    "E501",
+    "B008",
+    "C901",
+    "W191",
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"__init__.py" = ["F401"]  # Allow unused imports in __init__.py
+"__init__.py" = ["F401"]
 "tests/**/*.py" = [
-    "ARG",    # Unused function arguments in tests are OK (fixtures)
-    "S101",   # Assert statements are OK in tests
+    "ARG",
+    "S101",
 ]
 
 [tool.ruff.lint.isort]
-known-first-party = ["package_name"]
+known-first-party = ["rose"]
 
 # Black configuration (code formatting)
 [tool.black]
@@ -194,7 +195,7 @@ extend-exclude = '''
 python_version = "3.9"
 warn_return_any = true
 warn_unused_configs = true
-disallow_untyped_defs = false  # Set to true for stricter type checking
+disallow_untyped_defs = false
 disallow_incomplete_defs = true
 check_untyped_defs = true
 no_implicit_optional = true
