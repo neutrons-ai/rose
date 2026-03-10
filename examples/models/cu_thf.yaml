@@ -1,0 +1,42 @@
+# Cu / material / THF system
+#
+# Adapted from the analyzer planner cu_thf_planner.py.
+# Sample stack (top to bottom): THF | material | Cu | Ti | Si
+
+name: Cu/material/THF
+
+layers:
+  - name: THF
+    rho: 5.8
+    thickness: 0
+    interface: 11.4
+    fit:
+      interface: [1, 25]
+
+  - name: material
+    rho: 5.0
+    irho: 0.0
+    thickness: 30
+    interface: 13
+    fit:
+      thickness: [10, 100]
+      rho: [2.0, 6.0]
+      interface: [1, 25]
+
+  - name: Cu
+    rho: 6.25
+    thickness: 505
+    interface: 4.6
+    fit:
+      thickness: [400, 700]
+
+  - name: Ti
+    rho: -1.2
+    thickness: 39.5
+    interface: 9.1
+
+  - name: Si
+    rho: 2.07
+
+experiment:
+  step_interfaces: true

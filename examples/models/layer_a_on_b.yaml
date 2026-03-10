@@ -1,0 +1,39 @@
+# Layer A on Layer B on Silicon substrate
+#
+# Use-case from docs/project.md:
+#   "Given a model for layer A on top of layer B on top of a silicon
+#   substrate, find the best thickness of layer B to be sensitive to
+#   changes in the thickness of layer A."
+#
+# Variable (fitted) parameters:
+#   - layer_A thickness (10–100 Å)
+#   - layer_A rho (1.0–5.0 × 10⁻⁶ Å⁻²)
+#   - layer_A interface roughness (1–15 Å)
+#
+# Fixed but controllable:
+#   - layer_B thickness (default 50 Å — this is what you optimise over)
+
+name: Layer A on Layer B
+
+layers:
+  - name: air
+    rho: 0.0
+    thickness: 0
+    interface: 5
+
+  - name: layer_A
+    rho: 3.0
+    thickness: 40
+    interface: 8
+    fit:
+      thickness: [10, 100]
+      rho: [1.0, 5.0]
+      interface: [1, 15]
+
+  - name: layer_B
+    rho: 4.5
+    thickness: 50
+    interface: 5
+
+  - name: Si
+    rho: 2.07
