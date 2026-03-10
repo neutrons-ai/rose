@@ -9,6 +9,7 @@ This file configures how GitHub Copilot should assist with development in this r
 3. **Focus on progress tracking** - Users should always know what's happening and what's next
 4. **Test incrementally** - Each step should be testable
 5. **Review after major changes** - Use sub-agents for code review
+6. **Ground truths** - ALWAYS write key findings in docs/ground_truths.md for future reference and to help guide future development. Always update the file with new findings, and make sure to link to it in the relevant documentation and code comments.
 
 ## 🔄 Standard Workflow for Every Request
 
@@ -80,6 +81,27 @@ After completing a significant feature or refactor:
 - Provide the review context: what changed and why
 - Address any issues found
 - Update documentation as needed
+
+### Step 6: Security Review
+After implementing features that touch security-sensitive areas, invoke the **security-reviewer** sub-agent. Always trigger a security review when changes involve:
+- File I/O with user-provided paths (model files, configs, uploads)
+- Code execution (loading model files, running LLM-generated code)
+- API keys or credentials handling
+- Web routes accepting user input
+- YAML/JSON parsing of external data
+- New dependencies
+
+**How to invoke:**
+```
+Invoking security-reviewer sub-agent.
+
+Context:
+- Changed: src/rose/planner/model_loader.py (loads user-provided model files)
+- Changed: src/rose/core/config.py (parses YAML configs)
+
+Please review for: secrets leaks, code injection, path traversal,
+unsafe deserialization, and OWASP Top 10 issues.
+```
 
 ## 🛠️ Technology Stack Preferences
 
@@ -258,7 +280,8 @@ Please review for:
 - [ ] Error messages are clear and helpful
 - [ ] No obvious performance issues
 - [ ] Documentation is updated
-- [ ] No security concerns
+- [ ] **Security**: No hard-coded secrets, safe YAML loading, validated file paths
+- [ ] **Security**: No `exec()`/`eval()` on untrusted input without sandboxing
 - [ ] Code is understandable for scientists
 
 ## 📚 Documentation Standards
@@ -528,6 +551,7 @@ def process_cli(input_file, threshold, output):
 - [ ] Provide clear context
 - [ ] Address found issues
 - [ ] Update documentation
+- [ ] Invoke **security-reviewer** for security-sensitive changes
 - [ ] Confirm with user
 
 ---
