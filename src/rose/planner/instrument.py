@@ -41,10 +41,18 @@ class InstrumentSimulator:
     ):
         if data_file:
             data = load_measurement(data_file)
+            logger.info(
+                "Loaded data file: %s (%d Q points, Q range %.4f–%.4f Å⁻¹)",
+                data_file,
+                len(data["q"]),
+                data["q"].min(),
+                data["q"].max(),
+            )
             self.q_values: np.ndarray = data["q"]
             self.dq_values: np.ndarray = data["dq"]
+            safe_R = np.where(data["R"] == 0, 1.0, data["R"])
             self.relative_errors: np.ndarray = np.where(
-                data["R"] == 0, relative_error, data["dR"] / data["R"]
+                data["R"] == 0, relative_error, data["dR"] / safe_R
             )
             self.relative_errors[self.relative_errors <= 0] = relative_error
         elif q_values is not None:
@@ -121,6 +129,16 @@ def load_measurement(filename: str) -> dict[str, np.ndarray]:
     data = np.loadtxt(filename)
     if data.shape[1] < 4:
         raise ValueError("Data file must have at least 4 columns: Q, R, dR, dQ")
+
+    # Remove rows with duplicate Q values (keep first occurrence)
+    _, unique_idx = np.unique(data[:, 0], return_index=True)
+    if len(unique_idx) < len(data):
+        logger.info(
+            "Removed %d duplicate Q values from data file",
+            len(data) - len(unique_idx),
+        )
+        data = data[np.sort(unique_idx)]
+
     return {
         "q": data[:, 0],
         "R": data[:, 1],
