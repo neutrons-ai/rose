@@ -20,6 +20,7 @@ def perform_mcmc(
     dq_values: np.ndarray,
     mcmc_steps: int = 1000,
     burn_steps: int = 1000,
+    parallel: int = 0,
 ):
     """Run MCMC analysis on synthetic reflectivity data.
 
@@ -34,6 +35,8 @@ def perform_mcmc(
         dq_values: Q resolution values.
         mcmc_steps: Number of MCMC steps after burn-in.
         burn_steps: Number of burn-in steps to discard.
+        parallel: Number of CPUs for bumps DREAM. ``0`` uses all
+            available CPUs, ``1`` disables parallelism.
 
     Returns:
         A bumps fit result whose ``.state`` contains the DREAM chain.
@@ -49,6 +52,7 @@ def perform_mcmc(
         samples=mcmc_steps,
         burn=burn_steps,
         verbose=0,
+        parallel=parallel,
     )
 
     result.state.keep_best()

@@ -10,6 +10,11 @@ as development progresses so that future decisions build on established knowledg
   - Algorithm: Bayesian experimental design following Treece et al., J. Appl. Cryst. (2019), 52, 47–59
   - Two entropy methods: MVN (multivariate normal) and KDN (kernel density estimation)
   - Uses bumps DREAM sampler for MCMC posterior sampling
+  - **bumps `parallel` support**: `perform_mcmc()` accepts a `parallel` parameter
+    forwarded to `bumps.fitters.fit()`. `0` = all CPUs, `1` = single CPU.
+    Sequential optimization uses `parallel=0` (all CPUs per fit); parallel
+    optimization uses `parallel=1` (avoids oversubscription with outer
+    `ProcessPoolExecutor`).
 
 - **AuRE web app location**: `/Users/m2d/git/aure/`
   - Flask 3.0+ with Blueprint-based routing

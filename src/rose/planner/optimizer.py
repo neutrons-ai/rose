@@ -88,6 +88,7 @@ def evaluate_param(
     prior_entropy: float,
     mcmc_steps: int,
     entropy_method: str,
+    parallel: int = 0,
 ) -> tuple[float, float, float, list[dict[str, Any]]]:
     """Evaluate information gain for a single parameter value.
 
@@ -147,6 +148,7 @@ def evaluate_param(
                 errors,
                 dq_values=designer.simulator.dq_values,
                 mcmc_steps=mcmc_steps,
+                parallel=parallel,
             )
             mcmc_samples = mcmc_result.state.draw().points
 
@@ -266,6 +268,7 @@ def optimize(
                 prior_entropy,
                 mcmc_steps,
                 entropy_method,
+                parallel=0,
             )
             results.append([val, gain, std])
             simulated_data.append(rdata)
@@ -318,6 +321,7 @@ def optimize_parallel(
                 prior_entropy,
                 mcmc_steps,
                 entropy_method,
+                parallel=1,
             ): value
             for value in param_values
         }
