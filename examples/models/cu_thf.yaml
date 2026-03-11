@@ -9,9 +9,9 @@ layers:
   - name: THF
     rho: 5.8
     thickness: 0
-    interface: 11.4
+    interface: 16
     fit:
-      interface: [5, 25]
+      interface: [15, 45]
 
   - name: material
     rho: 5.0

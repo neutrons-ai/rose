@@ -15,6 +15,13 @@ as development progresses so that future decisions build on established knowledg
     Sequential optimization uses `parallel=0` (all CPUs per fit); parallel
     optimization uses `parallel=1` (avoids oversubscription with outer
     `ProcessPoolExecutor`).
+  - **Combined parallelization**: `optimize_parallel()` submits every
+    `(value, realization)` pair as an independent task via
+    `_evaluate_single_realization()`. Total tasks = `len(param_values) ×
+    realizations` (e.g. 7 values × 5 realizations = 35 tasks), keeping
+    all workers busy even when there are few hypothesis values.
+    `--workers N` CLI flag overrides the default auto-scaling
+    (`min(total_tasks, cpu_count, MAX_WORKERS)`).
 
 - **AuRE web app location**: `/Users/m2d/git/aure/`
   - Flask 3.0+ with Blueprint-based routing
@@ -90,7 +97,7 @@ the arbitrary choice of initial parameter values.
 - **Three-section YAML schema**: `layers`, `experiment`, `optimization`.
 - **`experiment` section** (all optional with defaults): `q_min` (0.008), `q_max` (0.2), `q_points` (50), `dq_over_q` (0.025), `relative_error` (0.10), `step_interfaces` (None).
 - **`optimization` section**: `param` (required), `param_values` (required), `parameters_of_interest` (optional), `num_realizations` (3), `mcmc_steps` (2000), `entropy_method` ("kdn").
-- **Remaining CLI options**: `MODEL_FILE` (positional), `--data-file`, `--output-dir`, `--parallel/--sequential`, `--verbose`.
+- **Remaining CLI options**: `MODEL_FILE` (positional), `--data-file`, `--output-dir`, `--parallel/--sequential`, `--workers N` (max parallel processes, default auto), `--verbose`.
 - **Validation**: `_validate_experiment()` and `_validate_optimization()` in model_loader.py enforce bounds regardless of entry point (CLI, API, or web).
 - **Constants**: `EXPERIMENT_DEFAULTS` and `OPTIMIZATION_DEFAULTS` dicts in model_loader.py.
 - **Rationale**: Cleaner CLI, self-contained model files, consistent validation across interfaces.

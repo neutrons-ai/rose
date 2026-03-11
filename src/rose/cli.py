@@ -115,12 +115,19 @@ def inspect(model_file: str, verbose: bool) -> None:
     default=True,
     help="Run in parallel or sequential mode",
 )
+@click.option(
+    "--workers",
+    type=click.IntRange(min=1),
+    default=None,
+    help="Max parallel worker processes (default: min(values, CPUs, 8))",
+)
 @click.option("--verbose", is_flag=True, help="Enable debug logging")
 def optimize(
     model_file: str,
     data_file: str | None,
     output_dir: str,
     parallel: bool,
+    workers: int | None,
     verbose: bool,
 ) -> None:
     """Optimise experiment design by maximising information gain.
@@ -218,15 +225,25 @@ def optimize(
 
     click.echo("\nRunning optimisation...\n")
 
-    run_fn = optimizer.optimize_parallel if parallel else optimizer.optimize
-    results, simulated_data = run_fn(
-        designer,
-        param_to_optimize=param,
-        param_values=param_vals,
-        realizations=num_realizations,
-        mcmc_steps=mcmc_steps,
-        entropy_method=entropy_method,
-    )
+    if parallel:
+        results, simulated_data = optimizer.optimize_parallel(
+            designer,
+            param_to_optimize=param,
+            param_values=param_vals,
+            realizations=num_realizations,
+            mcmc_steps=mcmc_steps,
+            entropy_method=entropy_method,
+            max_workers=workers,
+        )
+    else:
+        results, simulated_data = optimizer.optimize(
+            designer,
+            param_to_optimize=param,
+            param_values=param_vals,
+            realizations=num_realizations,
+            mcmc_steps=mcmc_steps,
+            entropy_method=entropy_method,
+        )
 
     # Display results
     click.echo(f"\n{'=' * 55}")

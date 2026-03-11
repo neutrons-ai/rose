@@ -80,6 +80,103 @@ def _get_sld_contour(
 # ------------------------------------------------------------------
 
 
+def _evaluate_single_realization(
+    designer: ExperimentDesigner,
+    param_to_optimize: str,
+    value: float,
+    realization_index: int,
+    prior_entropy: float,
+    mcmc_steps: int,
+    entropy_method: str,
+) -> tuple[float, int, float, dict[str, Any] | None]:
+    """Run one noise realization for a single parameter value.
+
+    This is the atomic work unit for parallel execution.  Each call
+    is independent and safe to run in a separate process.
+
+    Args:
+        designer: Configured ``ExperimentDesigner`` (will be copied
+            by the subprocess).
+        param_to_optimize: Name of the variable to set.
+        value: Value to assign.
+        realization_index: Index of this realization (for seeding).
+        prior_entropy: Pre-computed prior entropy (bits).
+        mcmc_steps: MCMC chain length.
+        entropy_method: ``"mvn"`` or ``"kdn"``.
+
+    Returns:
+        ``(value, realization_index, info_gain, realization_data)``
+        where *info_gain* is ``NaN`` on failure and
+        *realization_data* is ``None`` on failure.
+    """
+    # Deterministic seed from (value, realization_index) so every
+    # worker gets a unique but reproducible stream.
+    rng = np.random.default_rng(seed=abs(hash((value, realization_index))))
+
+    designer.set_parameter_to_optimize(param_to_optimize, value)
+    original_values = {p.name: p.value for p in designer.problem.parameters}
+
+    try:
+        designer.draw_truth_from_prior(rng=rng)
+        q_values, r_calc = designer.experiment.reflectivity()
+        noisy_reflectivity, errors = designer.simulator.add_noise(r_calc, rng=rng)
+
+        designer.restore_parameter_values(original_values)
+
+        mcmc_result = mcmc_sampler.perform_mcmc(
+            designer.experiment.sample,
+            q_values,
+            noisy_reflectivity,
+            errors,
+            dq_values=designer.simulator.dq_values,
+            mcmc_steps=mcmc_steps,
+            parallel=1,
+        )
+        mcmc_samples = mcmc_result.state.draw().points
+
+        marginal = designer.extract_marginal_samples(mcmc_samples)
+        posterior_entropy = designer.calculate_posterior_entropy(
+            marginal, method=entropy_method
+        )
+        info_gain = prior_entropy - posterior_entropy
+
+        z, best, low, high = _get_sld_contour(
+            designer.problem,
+            mcmc_result.state,
+            cl=90,
+            npoints=200,
+            index=1,
+            align=-1,
+        )[0]
+
+        best_p, _ = mcmc_result.state.best()
+        designer.problem.setp(best_p)
+        _, fit_reflectivity = designer.experiment.reflectivity()
+
+        rdata: dict[str, Any] = {
+            "q_values": q_values.tolist(),
+            "dq_values": designer.simulator.dq_values.tolist(),
+            "reflectivity": fit_reflectivity.tolist(),
+            "noisy_reflectivity": noisy_reflectivity.tolist(),
+            "errors": errors.tolist(),
+            "z": z.tolist() if hasattr(z, "tolist") else list(z),
+            "sld_best": best.tolist() if hasattr(best, "tolist") else list(best),
+            "sld_low": low.tolist() if hasattr(low, "tolist") else list(low),
+            "sld_high": high.tolist() if hasattr(high, "tolist") else list(high),
+            "posterior_entropy": posterior_entropy,
+        }
+        return value, realization_index, info_gain, rdata
+
+    except Exception as e:
+        logger.error(
+            "Realization %d failed for value %.3f: %s", realization_index, value, e
+        )
+        logger.debug("Full traceback:", exc_info=True)
+        return value, realization_index, float("nan"), None
+    finally:
+        designer.restore_parameter_values(original_values)
+
+
 def evaluate_param(
     designer: ExperimentDesigner,
     param_to_optimize: str,
@@ -287,11 +384,19 @@ def optimize_parallel(
     realizations: int = 3,
     mcmc_steps: int = 2000,
     entropy_method: str = "kdn",
+    max_workers: int | None = None,
 ) -> tuple[list[list[float]], list[list[dict[str, Any]]]]:
     """Run optimization in parallel using ``ProcessPoolExecutor``.
 
-    Same interface as :func:`optimize` but fans out work across CPUs.
+    Submits every ``(value, realization)`` pair as an independent task,
+    so all available workers stay busy even when the number of
+    parameter values is smaller than the worker count.
+
     Results are returned in the original *param_values* order.
+
+    Args:
+        max_workers: Maximum worker processes.  ``None`` (default)
+            picks ``min(total_tasks, cpu_count, MAX_WORKERS)``.
     """
     if param_to_optimize not in designer.all_model_parameters:
         raise ValueError(
@@ -306,50 +411,66 @@ def optimize_parallel(
     prior_entropy = designer.prior_entropy()
     logger.info("Prior entropy: %.4f bits", prior_entropy)
 
-    results: list[tuple[float, float, float]] = []
-    simulated_data: list[list[dict[str, Any]]] = []
+    total_tasks = len(param_values) * realizations
+    if max_workers is None:
+        max_workers = min(total_tasks, os.cpu_count() or 4, MAX_WORKERS)
 
-    max_workers = min(len(param_values), os.cpu_count() or 4, MAX_WORKERS)
+    # Collect per-value results: {value: ([gains], [rdata])}
+    value_gains: dict[float, list[float]] = {v: [] for v in param_values}
+    value_rdata: dict[float, list[dict[str, Any]]] = {v: [] for v in param_values}
+
     with ProcessPoolExecutor(max_workers=max_workers) as executor:
-        future_to_value = {
-            executor.submit(
-                evaluate_param,
-                designer,
-                param_to_optimize,
-                value,
-                realizations,
-                prior_entropy,
-                mcmc_steps,
-                entropy_method,
-                parallel=1,
-            ): value
-            for value in param_values
-        }
+        futures = {}
+        for value in param_values:
+            for ri in range(realizations):
+                future = executor.submit(
+                    _evaluate_single_realization,
+                    designer,
+                    param_to_optimize,
+                    value,
+                    ri,
+                    prior_entropy,
+                    mcmc_steps,
+                    entropy_method,
+                )
+                futures[future] = (value, ri)
 
         for future in tqdm(
-            as_completed(future_to_value),
-            total=len(param_values),
+            as_completed(futures),
+            total=total_tasks,
             desc="Optimizing",
-            unit="val",
+            unit="task",
         ):
-            value = future_to_value[future]
+            value, ri = futures[future]
             try:
-                val, gain, std, rdata = future.result()
-                results.append((val, gain, std))
-                simulated_data.append(rdata)
-                logger.info("Value %.3f: ΔH = %.4f ± %.4f bits", val, gain, std)
+                _val, _ri, gain, rdata = future.result()
+                value_gains[value].append(gain)
+                if rdata is not None:
+                    value_rdata[value].append(rdata)
             except Exception as e:
-                logger.error("Error evaluating value %s: %s", value, e)
+                logger.error(
+                    "Error evaluating value %s realization %d: %s", value, ri, e
+                )
                 logger.debug("Full traceback:", exc_info=True)
+                value_gains[value].append(float("nan"))
 
-    # Re-order to match input param_values
-    value_to_result = {r[0]: r for r in results}
-    value_to_data = {r[0]: d for r, d in zip(results, simulated_data)}
-    ordered_results = [
-        [v, value_to_result[v][1], value_to_result[v][2]]
-        for v in param_values
-        if v in value_to_result
-    ]
-    ordered_data = [value_to_data[v] for v in param_values if v in value_to_data]
+    # Aggregate and order by input param_values
+    ordered_results: list[list[float]] = []
+    ordered_data: list[list[dict[str, Any]]] = []
+    for v in param_values:
+        gains = value_gains[v]
+        n_failed = sum(1 for g in gains if np.isnan(g))
+        if n_failed > 0:
+            logger.warning(
+                "%d of %d realizations failed for value %.3f",
+                n_failed,
+                realizations,
+                v,
+            )
+        avg = float(np.nanmean(gains))
+        std = float(np.nanstd(gains))
+        ordered_results.append([v, avg, std])
+        ordered_data.append(value_rdata[v])
+        logger.info("Value %.3f: ΔH = %.4f ± %.4f bits", v, avg, std)
 
     return ordered_results, ordered_data
