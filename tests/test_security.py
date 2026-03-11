@@ -39,63 +39,62 @@ class TestPathTraversal:
         assert "Path traversal" in result.output or "not allowed" in result.output
 
 
-# ── CLI IntRange enforcement ─────────────────────────────────────
+# ── YAML schema bounds enforcement ───────────────────────────────
 
 
-class TestCLIBounds:
-    def test_mcmc_steps_too_low(self):
-        runner = CliRunner()
-        result = runner.invoke(
-            main,
-            [
-                "optimize",
-                "--model-file",
-                "examples/models/layer_a_on_b.yaml",
-                "--param",
-                "x",
-                "--param-values",
-                "1",
-                "--mcmc-steps",
-                "10",
-            ],
+class TestYAMLBounds:
+    """Bounds that were previously CLI IntRange are now validated in model_loader."""
+
+    def test_mcmc_steps_too_low(self, tmp_path):
+        from rose.planner.model_loader import load_model_description
+
+        bad = tmp_path / "model.yaml"
+        import yaml
+
+        bad.write_text(
+            yaml.dump(
+                {
+                    "layers": [{"name": "air", "rho": 0}, {"name": "Si", "rho": 2.07}],
+                    "optimization": {"mcmc_steps": 10},
+                }
+            )
         )
-        assert result.exit_code != 0
+        with pytest.raises(ValueError, match="mcmc_steps"):
+            load_model_description(str(bad))
 
-    def test_mcmc_steps_too_high(self):
-        runner = CliRunner()
-        result = runner.invoke(
-            main,
-            [
-                "optimize",
-                "--model-file",
-                "examples/models/layer_a_on_b.yaml",
-                "--param",
-                "x",
-                "--param-values",
-                "1",
-                "--mcmc-steps",
-                "999999",
-            ],
-        )
-        assert result.exit_code != 0
+    def test_mcmc_steps_too_high(self, tmp_path):
+        from rose.planner.model_loader import load_model_description
 
-    def test_num_realizations_zero(self):
-        runner = CliRunner()
-        result = runner.invoke(
-            main,
-            [
-                "optimize",
-                "--model-file",
-                "examples/models/layer_a_on_b.yaml",
-                "--param",
-                "x",
-                "--param-values",
-                "1",
-                "--num-realizations",
-                "0",
-            ],
+        bad = tmp_path / "model.yaml"
+        import yaml
+
+        bad.write_text(
+            yaml.dump(
+                {
+                    "layers": [{"name": "air", "rho": 0}, {"name": "Si", "rho": 2.07}],
+                    "optimization": {"mcmc_steps": 999999},
+                }
+            )
         )
-        assert result.exit_code != 0
+        with pytest.raises(ValueError, match="mcmc_steps"):
+            load_model_description(str(bad))
+
+    def test_num_realizations_zero(self, tmp_path):
+        from rose.planner.model_loader import load_model_description
+
+        bad = tmp_path / "model.yaml"
+        import yaml
+
+        bad.write_text(
+            yaml.dump(
+                {
+                    "layers": [{"name": "air", "rho": 0}, {"name": "Si", "rho": 2.07}],
+                    "optimization": {"num_realizations": 0},
+                }
+            )
+        )
+        with pytest.raises(ValueError, match="num_realizations"):
+            load_model_description(str(bad))
 
 
 # ── File size guards ─────────────────────────────────────────────

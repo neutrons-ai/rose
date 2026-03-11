@@ -34,16 +34,28 @@ H_prior = Σ log₂(p_max - p_min)  for all parameters of interest
 
 For each parameter value to test:
     For each noise realization:
-        1. Simulate noisy reflectivity from model
-        2. Run MCMC (DREAM) on the noisy data
-        3. Extract marginal posterior samples for parameters of interest
-        4. Compute H_posterior via MVN or KDE
-        5. ΔH = H_prior - H_posterior
+        1. Draw "true" fitted-parameter values uniformly from prior bounds
+        2. Simulate reflectivity from the drawn truth
+        3. Add noise to get synthetic measurement
+        4. Restore YAML initial values as MCMC starting point
+        5. Run MCMC (DREAM) on the noisy data
+        6. Extract marginal posterior samples for parameters of interest
+        7. Compute H_posterior via MVN or KDE
+        8. ΔH = H_prior - H_posterior
 
     Average ΔH over realizations → information gain for this parameter value
 
 Output: parameter value with maximum average ΔH
 ```
+
+**Key design choice**: The "true" values for each realization are drawn
+from the prior (step 1), not taken from the YAML initial values. This
+marginalizes the information gain over the unknown truth, making the
+result independent of the initial `rho`, `thickness`, etc. values in
+the model file. The initial values in the YAML are only used as MCMC
+starting points (step 4). Bug fix applied 2026-03-11; previously the
+initial values were used as truth, which caused the ΔH to depend on
+the arbitrary choice of initial parameter values.
 
 ## Decisions
 
@@ -65,13 +77,30 @@ Output: parameter value with maximum average ΔH
 ### CLI structure
 - `rose` — Click group (top-level)
 - `rose inspect <MODEL_FILE>` — loads model, shows variable/fixed params
-- `rose optimize --model-file ... --param ... --param-values ...` — runs full optimization
+- `rose optimize <MODEL_FILE>` — runs full optimization (all settings from YAML)
 - `rose report --result-file ... --output-dir ...` — regenerates plots from JSON
 
+### YAML-driven configuration
+- All experiment and optimization settings moved from CLI flags to the YAML model file.
+- **Three-section YAML schema**: `layers`, `experiment`, `optimization`.
+- **`experiment` section** (all optional with defaults): `q_min` (0.008), `q_max` (0.2), `q_points` (50), `dq_over_q` (0.025), `relative_error` (0.10), `step_interfaces` (None).
+- **`optimization` section**: `param` (required), `param_values` (required), `parameters_of_interest` (optional), `num_realizations` (3), `mcmc_steps` (2000), `entropy_method` ("kdn").
+- **Remaining CLI options**: `MODEL_FILE` (positional), `--data-file`, `--output-dir`, `--parallel/--sequential`, `--verbose`.
+- **Validation**: `_validate_experiment()` and `_validate_optimization()` in model_loader.py enforce bounds regardless of entry point (CLI, API, or web).
+- **Constants**: `EXPERIMENT_DEFAULTS` and `OPTIMIZATION_DEFAULTS` dicts in model_loader.py.
+- **Rationale**: Cleaner CLI, self-contained model files, consistent validation across interfaces.
+
 ### Test coverage (Phase 1 end)
-- 68 tests, all passing (including 9 security tests)
-- Modules tested: experiment_design (81%), instrument (91%), model_loader (96%), report (98%), cli (46%), core/types (100%), core/config (94%)
+- 83 tests, all passing (including 9 security tests)
+- Modules tested: experiment_design (83%), instrument (92%), model_loader (94%), report (97%), cli (36%), core/types (100%), core/config (94%)
 - `mcmc_sampler` and `optimizer` at 0% — these require MCMC which is slow; tested indirectly via CLI integration
+
+### Prior sampling bug fix (2026-03-11)
+- **Bug**: `evaluate_param()` used YAML initial values as "ground truth" for simulating synthetic data. Changing an initial value (e.g. material rho from 5 to 4) changed the information gain, even though the fit range covered both values.
+- **Fix**: Each noise realization now draws "true" fitted-parameter values uniformly from the prior bounds via `draw_truth_from_prior(rng)`. This marginalizes the information gain over all possible truths.
+- **RNG safety**: Explicit `np.random.Generator` is threaded through `draw_truth_from_prior()` and `add_noise()`. In `evaluate_param()`, the RNG is seeded from the parameter value, giving each parallel worker a unique but reproducible stream.
+- **State restoration**: A `finally` block in the realization loop calls `restore_parameter_values()` so the model is always left in a clean state.
+- **Failed realizations**: Now recorded as `NaN` (not `0.0`) and excluded via `np.nanmean`/`np.nanstd` to avoid biasing the mean downward.
 
 ### YAML/JSON model migration
 - Replaced `importlib`-based Python model loading with declarative YAML/JSON parsing.
@@ -86,6 +115,6 @@ Output: parameter value with maximum average ΔH
 - **optimizer.py**: `ProcessPoolExecutor` capped at `MAX_WORKERS=8`, `MAX_PARAM_VALUES=200` limit, full tracebacks at DEBUG level, realization failure count warnings
 - **instrument.py**: `MAX_DATA_FILE_SIZE=50MB` check before `np.loadtxt`
 - **report.py**: `MAX_JSON_FILE_SIZE=100MB` check before `json.load`
-- **cli.py**: `_validate_output_path()` rejects `..` in output dir, `IntRange(1,100)` on `--num-realizations`, `IntRange(100,100000)` on `--mcmc-steps`
+- **cli.py**: `_validate_output_path()` rejects `..` in output dir; experiment/optimization bounds now enforced in model_loader validation functions rather than Click IntRange
 - **experiment_design.py**: KDE fallback now logs full traceback at DEBUG level
 - **No remaining code execution risk**: importlib fully removed

@@ -77,17 +77,23 @@ class InstrumentSimulator:
     def add_noise(
         self,
         reflectivity: np.ndarray,
+        rng: np.random.Generator | None = None,
     ) -> tuple[np.ndarray, np.ndarray]:
         """Add Gaussian noise to a reflectivity curve.
 
         Args:
             reflectivity: Clean reflectivity values.
+            rng: Explicit NumPy random generator.  When ``None`` a new
+                 unseeded generator is created.  Pass an explicit
+                 generator for reproducibility and parallel safety.
 
         Returns:
             Tuple of (noisy_reflectivity, error_bars).
         """
+        if rng is None:
+            rng = np.random.default_rng()
         errors = self.relative_errors * reflectivity
-        noise = np.random.normal(0, errors)
+        noise = rng.normal(0, errors)
         noisy_reflectivity = reflectivity + noise
         return noisy_reflectivity, errors
 

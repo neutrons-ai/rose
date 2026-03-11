@@ -37,3 +37,18 @@ layers:
 
   - name: Si
     rho: 2.07
+
+experiment:
+  q_min: 0.008
+  q_max: 0.2
+  q_points: 50
+  dq_over_q: 0.025
+  relative_error: 0.10
+
+optimization:
+  param: layer_B thickness
+  param_values: [20, 30, 40, 50, 60, 70, 80]
+  parameters_of_interest: [layer_A thickness]
+  num_realizations: 5
+  mcmc_steps: 3000
+  entropy_method: kdn

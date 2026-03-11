@@ -35,13 +35,15 @@ def test_inspect_help():
 
 
 def test_optimize_help():
-    """rose optimize --help exits cleanly."""
+    """rose optimize --help shows positional MODEL_FILE and options."""
     runner = CliRunner()
     result = runner.invoke(main, ["optimize", "--help"])
 
     assert result.exit_code == 0
-    assert "--model-file" in result.output
-    assert "--param" in result.output
+    assert "MODEL_FILE" in result.output
+    assert "--data-file" in result.output
+    assert "--output-dir" in result.output
+    assert "--parallel" in result.output
 
 
 def test_inspect_example_model():

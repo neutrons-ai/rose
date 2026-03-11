@@ -92,10 +92,18 @@ def evaluate_param(
     """Evaluate information gain for a single parameter value.
 
     For each noise realization:
-      1. Simulate noisy reflectivity.
-      2. Run MCMC to sample the posterior.
-      3. Compute posterior entropy.
-      4. Accumulate ``ΔH = H_prior − H_posterior``.
+      1. Draw 'true' fitted-parameter values from the prior.
+      2. Simulate noisy reflectivity from that truth.
+      3. Restore original parameter values (MCMC starting point).
+      4. Run MCMC to sample the posterior.
+      5. Compute posterior entropy.
+      6. Accumulate ``ΔH = H_prior − H_posterior``.
+
+    Drawing from the prior ensures the information gain is an
+    expectation over unknown true values, following Treece et al.
+
+    A per-call ``np.random.Generator`` seeded from *value* ensures
+    reproducibility and avoids correlated draws across parallel workers.
 
     Args:
         designer: Configured ``ExperimentDesigner``.
@@ -109,16 +117,28 @@ def evaluate_param(
     Returns:
         ``(value, mean_info_gain, std_info_gain, realization_data)``
     """
+    # Seed from the float value so each worker gets a unique but
+    # reproducible stream — avoids correlated draws across processes.
+    rng = np.random.default_rng(seed=abs(hash(value)))
+
     designer.set_parameter_to_optimize(param_to_optimize, value)
 
-    q_values, r_calc = designer.experiment.reflectivity()
+    # Save the original (YAML) values for fitted parameters so we can
+    # restore them as the MCMC starting point after each truth draw.
+    original_values = {p.name: p.value for p in designer.problem.parameters}
 
     realization_gains: list[float] = []
     realization_data: list[dict[str, Any]] = []
 
     for _ in range(realizations):
         try:
-            noisy_reflectivity, errors = designer.simulator.add_noise(r_calc)
+            # Draw random "true" values from the prior for the synthetic data
+            designer.draw_truth_from_prior(rng=rng)
+            q_values, r_calc = designer.experiment.reflectivity()
+            noisy_reflectivity, errors = designer.simulator.add_noise(r_calc, rng=rng)
+
+            # Restore original values so MCMC starts from the YAML values
+            designer.restore_parameter_values(original_values)
 
             mcmc_result = mcmc_sampler.perform_mcmc(
                 designer.experiment.sample,
@@ -174,9 +194,11 @@ def evaluate_param(
         except Exception as e:
             logger.error("Realization failed: %s", e)
             logger.debug("Full traceback:", exc_info=True)
-            realization_gains.append(0.0)
+            realization_gains.append(float("nan"))
+        finally:
+            designer.restore_parameter_values(original_values)
 
-    n_failed = realization_gains.count(0.0)
+    n_failed = sum(1 for g in realization_gains if np.isnan(g))
     if n_failed > 0:
         logger.warning(
             "%d of %d realizations failed for value %.3f",
@@ -185,8 +207,8 @@ def evaluate_param(
             value,
         )
 
-    avg = float(np.mean(realization_gains))
-    std = float(np.std(realization_gains))
+    avg = float(np.nanmean(realization_gains))
+    std = float(np.nanstd(realization_gains))
     return value, avg, std, realization_data
 
 

@@ -10,8 +10,8 @@ Provides subcommands for experiment design optimization:
 Example usage::
 
     rose inspect examples/models/layer_a_on_b.yaml
-    rose optimize --model-file examples/models/layer_a_on_b.yaml \\
-        --param "layer_B thickness" --param-values "20,40,60,80"
+    rose optimize examples/models/layer_a_on_b.yaml
+    rose optimize examples/models/layer_a_on_b.yaml --output-dir my_results
 """
 
 from __future__ import annotations
@@ -96,49 +96,13 @@ def inspect(model_file: str, verbose: bool) -> None:
 
 
 @main.command()
-@click.option(
-    "--model-file",
-    type=click.Path(exists=True),
-    required=True,
-    help="YAML or JSON model file describing the layer stack",
-)
+@click.argument("model_file", type=click.Path(exists=True))
 @click.option(
     "--data-file",
     type=click.Path(exists=True),
     default=None,
     help="Measurement data file (4 columns: Q, R, dR, dQ). "
-    "If omitted, a default Q grid is used.",
-)
-@click.option("--param", type=str, required=True, help="Parameter to optimise over")
-@click.option(
-    "--param-values",
-    type=str,
-    required=True,
-    help="Comma-separated values to test (e.g. '20,40,60')",
-)
-@click.option(
-    "--parameters-of-interest",
-    type=str,
-    default=None,
-    help="Comma-separated names for marginal entropy (default: all variable params)",
-)
-@click.option(
-    "--num-realizations",
-    type=click.IntRange(1, 100),
-    default=3,
-    help="Noise realizations (1–100)",
-)
-@click.option(
-    "--mcmc-steps",
-    type=click.IntRange(100, 100_000),
-    default=2000,
-    help="MCMC steps after burn-in (100–100,000)",
-)
-@click.option(
-    "--entropy-method",
-    type=click.Choice(["mvn", "kdn"]),
-    default="kdn",
-    help="Entropy calculation method",
+    "Overrides the Q-grid settings in the model file.",
 )
 @click.option(
     "--output-dir",
@@ -155,39 +119,61 @@ def inspect(model_file: str, verbose: bool) -> None:
 def optimize(
     model_file: str,
     data_file: str | None,
-    param: str,
-    param_values: str,
-    parameters_of_interest: str | None,
-    num_realizations: int,
-    mcmc_steps: int,
-    entropy_method: str,
     output_dir: str,
     parallel: bool,
     verbose: bool,
 ) -> None:
     """Optimise experiment design by maximising information gain.
 
-    Evaluates a grid of parameter values and reports which value
-    yields the greatest expected information gain about the
-    parameters of interest.
+    MODEL_FILE is a YAML or JSON file describing the layer stack,
+    instrument settings (experiment section), and what to optimise
+    (optimization section).
+
+    All optimisation parameters (param, param_values, mcmc_steps, etc.)
+    are read from the model file.  Use --data-file to override the
+    Q-grid with a real measurement.
     """
     _setup_logging(verbose)
 
     from rose.planner import instrument as inst
     from rose.planner import optimizer
     from rose.planner.experiment_design import ExperimentDesigner
-    from rose.planner.model_loader import load_experiment
+    from rose.planner.model_loader import (
+        EXPERIMENT_DEFAULTS,
+        OPTIMIZATION_DEFAULTS,
+        load_experiment,
+        load_model_description,
+    )
     from rose.planner.report import make_report
 
     _validate_output_path(output_dir)
     os.makedirs(output_dir, exist_ok=True)
 
-    param_vals = [float(x.strip()) for x in param_values.split(",")]
-    poi = (
-        [s.strip() for s in parameters_of_interest.split(",")]
-        if parameters_of_interest
-        else None
-    )
+    # Load model description and extract sections
+    desc = load_model_description(model_file)
+    expt_cfg = {**EXPERIMENT_DEFAULTS, **desc.get("experiment", {})}
+    opt_cfg = {**OPTIMIZATION_DEFAULTS, **desc.get("optimization", {})}
+
+    # Validate required optimization keys
+    if "param" not in opt_cfg:
+        raise click.UsageError(
+            "Model file must contain optimization.param "
+            "(the parameter to optimise over)"
+        )
+    if "param_values" not in opt_cfg:
+        raise click.UsageError(
+            "Model file must contain optimization.param_values "
+            "(list of candidate values to test)"
+        )
+
+    param = opt_cfg["param"]
+    param_vals = [float(v) for v in opt_cfg["param_values"]]
+    poi = opt_cfg.get("parameters_of_interest")
+    if isinstance(poi, list):
+        poi = [str(s) for s in poi]
+    num_realizations = int(opt_cfg["num_realizations"])
+    mcmc_steps = int(opt_cfg["mcmc_steps"])
+    entropy_method = str(opt_cfg["entropy_method"])
 
     click.echo("Starting experiment design optimisation...")
     click.echo(f"  Model:       {model_file}")
@@ -198,11 +184,26 @@ def optimize(
     click.echo(f"  Method:      {entropy_method}")
     click.echo(f"  Mode:        {'parallel' if parallel else 'sequential'}")
 
+    # CLI --data-file overrides YAML experiment.data_file
+    effective_data_file = data_file or expt_cfg.get("data_file")
+
     # Build simulator
-    if data_file:
-        simulator = inst.InstrumentSimulator(data_file=data_file)
+    if effective_data_file:
+        simulator = inst.InstrumentSimulator(data_file=effective_data_file)
     else:
-        simulator = inst.InstrumentSimulator()
+        q_min = float(expt_cfg["q_min"])
+        q_max = float(expt_cfg["q_max"])
+        q_points = int(expt_cfg["q_points"])
+        dq_over_q = float(expt_cfg["dq_over_q"])
+        relative_error = float(expt_cfg["relative_error"])
+        q = np.logspace(np.log10(q_min), np.log10(q_max), q_points)
+        dq = dq_over_q * q
+        simulator = inst.InstrumentSimulator(
+            q_values=q, dq_values=dq, relative_error=relative_error
+        )
+        click.echo(f"  Q range:     {q_min}–{q_max} Å⁻¹ ({q_points} points)")
+        click.echo(f"  dQ/Q:        {dq_over_q}")
+        click.echo(f"  dR/R:        {relative_error}")
 
     experiment = load_experiment(model_file, simulator.q_values, simulator.dq_values)
     designer = ExperimentDesigner(

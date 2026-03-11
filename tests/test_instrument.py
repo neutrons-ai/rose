@@ -67,6 +67,14 @@ class TestAddNoise:
         # Extremely unlikely that all values remain exactly the same
         assert not np.allclose(noisy, reflectivity)
 
+    def test_explicit_rng_reproducible(self):
+        """Passing the same rng seed produces identical noise."""
+        sim = InstrumentSimulator()
+        reflectivity = np.ones(50) * 0.5
+        noisy1, _ = sim.add_noise(reflectivity, rng=np.random.default_rng(42))
+        noisy2, _ = sim.add_noise(reflectivity, rng=np.random.default_rng(42))
+        np.testing.assert_array_equal(noisy1, noisy2)
+
 
 # ── load_measurement ─────────────────────────────────────────────
 

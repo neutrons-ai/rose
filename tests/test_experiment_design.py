@@ -139,6 +139,55 @@ class TestSetParameter:
             designer.set_parameter_to_optimize("nonexistent", 1.0)
 
 
+# ── draw_truth_from_prior / restore_parameter_values ─────────────
+
+
+class TestDrawTruthFromPrior:
+    def test_drawn_values_within_bounds(self, designer):
+        """All drawn values must lie within their fit bounds."""
+        rng = np.random.default_rng(42)
+        drawn = designer.draw_truth_from_prior(rng=rng)
+        for name, val in drawn.items():
+            pmin, pmax = designer.parameters[name]["bounds"]
+            assert pmin <= val <= pmax, f"{name}={val} outside [{pmin}, {pmax}]"
+
+    def test_drawn_values_differ_from_original(self, designer):
+        """With high probability, at least one drawn value differs."""
+        original = {p.name: p.value for p in designer.problem.parameters}
+        rng = np.random.default_rng(123)
+        drawn = designer.draw_truth_from_prior(rng=rng)
+        # Very unlikely all three match exactly
+        assert any(abs(drawn[n] - original[n]) > 1e-10 for n in drawn)
+
+    def test_model_updated_after_draw(self, designer):
+        """After drawing, the model's parameter values should match the draw."""
+        rng = np.random.default_rng(7)
+        drawn = designer.draw_truth_from_prior(rng=rng)
+        for param in designer.problem.parameters:
+            assert abs(param.value - drawn[param.name]) < 1e-12
+
+    def test_restore_returns_to_original(self, designer):
+        """restore_parameter_values brings params back to saved values."""
+        saved = {p.name: p.value for p in designer.problem.parameters}
+        designer.draw_truth_from_prior()
+        designer.restore_parameter_values(saved)
+        for param in designer.problem.parameters:
+            assert abs(param.value - saved[param.name]) < 1e-12
+
+    def test_successive_draws_differ(self, designer):
+        """Two draws with different seeds produce different truths."""
+        rng1 = np.random.default_rng(1)
+        draw1 = designer.draw_truth_from_prior(rng=rng1)
+        rng2 = np.random.default_rng(999)
+        draw2 = designer.draw_truth_from_prior(rng=rng2)
+        assert any(abs(draw1[n] - draw2[n]) > 1e-6 for n in draw1)
+
+    def test_default_rng_when_none(self, designer):
+        """Passing no rng still works (creates a fresh generator)."""
+        drawn = designer.draw_truth_from_prior()
+        assert len(drawn) == len(list(designer.problem.parameters))
+
+
 # ── repr ─────────────────────────────────────────────────────────
 
 

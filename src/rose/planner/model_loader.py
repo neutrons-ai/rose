@@ -32,7 +32,20 @@ YAML schema example::
       - name: Si
         rho: 2.07
     experiment:
+      q_min: 0.008
+      q_max: 0.2
+      q_points: 50
+      dq_over_q: 0.025
+      relative_error: 0.10
       step_interfaces: false
+      data_file: null
+    optimization:
+      param: layer_B thickness
+      param_values: [20, 40, 60, 80]
+      parameters_of_interest: [layer_A thickness]
+      num_realizations: 5
+      mcmc_steps: 3000
+      entropy_method: kdn
 """
 
 from __future__ import annotations
@@ -50,6 +63,24 @@ logger = logging.getLogger(__name__)
 
 #: Maximum allowed model file size (1 MB).
 MAX_MODEL_FILE_SIZE = 1 * 1024 * 1024
+
+#: Default values for the experiment section.
+EXPERIMENT_DEFAULTS: dict[str, object] = {
+    "q_min": 0.008,
+    "q_max": 0.2,
+    "q_points": 50,
+    "dq_over_q": 0.025,
+    "relative_error": 0.10,
+    "step_interfaces": None,
+    "data_file": None,
+}
+
+#: Default values for the optimization section.
+OPTIMIZATION_DEFAULTS: dict[str, object] = {
+    "num_realizations": 3,
+    "mcmc_steps": 2000,
+    "entropy_method": "kdn",
+}
 
 
 # ------------------------------------------------------------------
@@ -100,6 +131,10 @@ def load_model_description(model_file: str | Path) -> dict[str, Any]:
         )
 
     _validate_layers(desc["layers"])
+    if "experiment" in desc:
+        _validate_experiment(desc["experiment"])
+    if "optimization" in desc:
+        _validate_optimization(desc["optimization"])
     return desc
 
 
@@ -300,3 +335,70 @@ def _validate_layers(layers: list) -> None:
                     f"Layer '{layer['name']}' fit.{key}: "
                     f"min ({bounds[0]}) must be less than max ({bounds[1]})"
                 )
+
+
+def _validate_experiment(experiment: object) -> None:
+    """Validate the ``experiment`` section of the model description."""
+    if not isinstance(experiment, dict):
+        raise ValueError("'experiment' must be a mapping")
+    allowed = set(EXPERIMENT_DEFAULTS)
+    unknown = set(experiment) - allowed
+    if unknown:
+        raise ValueError(
+            f"Unknown keys in 'experiment': {sorted(unknown)}. "
+            f"Allowed: {sorted(allowed)}"
+        )
+    if "q_min" in experiment and "q_max" in experiment:  # noqa: SIM102
+        if experiment["q_min"] >= experiment["q_max"]:
+            raise ValueError("experiment.q_min must be less than experiment.q_max")
+    if "q_points" in experiment:
+        qp = experiment["q_points"]
+        if not isinstance(qp, int) or qp < 5 or qp > 1000:
+            raise ValueError("experiment.q_points must be an integer in 5–1000")
+    if "dq_over_q" in experiment and experiment["dq_over_q"] <= 0:
+        raise ValueError("experiment.dq_over_q must be positive")
+    if "relative_error" in experiment and experiment["relative_error"] <= 0:
+        raise ValueError("experiment.relative_error must be positive")
+
+
+def _validate_optimization(optimization: object) -> None:
+    """Validate the ``optimization`` section of the model description."""
+    if not isinstance(optimization, dict):
+        raise ValueError("'optimization' must be a mapping")
+    allowed = {
+        "param",
+        "param_values",
+        "parameters_of_interest",
+        "num_realizations",
+        "mcmc_steps",
+        "entropy_method",
+    }
+    unknown = set(optimization) - allowed
+    if unknown:
+        raise ValueError(
+            f"Unknown keys in 'optimization': {sorted(unknown)}. "
+            f"Allowed: {sorted(allowed)}"
+        )
+    if "param" in optimization and not isinstance(optimization["param"], str):
+        raise ValueError("optimization.param must be a string")
+    if "param_values" in optimization:
+        pv = optimization["param_values"]
+        if not isinstance(pv, list) or not pv:
+            raise ValueError("optimization.param_values must be a non-empty list")
+    if "num_realizations" in optimization:
+        nr = optimization["num_realizations"]
+        if not isinstance(nr, int) or nr < 1 or nr > 100:
+            raise ValueError(
+                "optimization.num_realizations must be an integer in 1–100"
+            )
+    if "mcmc_steps" in optimization:
+        ms = optimization["mcmc_steps"]
+        if not isinstance(ms, int) or ms < 100 or ms > 100_000:
+            raise ValueError(
+                "optimization.mcmc_steps must be an integer in 100–100,000"
+            )
+    if "entropy_method" in optimization and optimization["entropy_method"] not in (
+        "mvn",
+        "kdn",
+    ):
+        raise ValueError("optimization.entropy_method must be 'mvn' or 'kdn'")

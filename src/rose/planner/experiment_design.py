@@ -125,6 +125,47 @@ class ExperimentDesigner:
             h_prior += p["h_prior"]
         return h_prior
 
+    def draw_truth_from_prior(
+        self, rng: np.random.Generator | None = None
+    ) -> dict[str, float]:
+        """Draw random 'true' values for all fitted parameters from the prior.
+
+        Each fitted parameter is sampled uniformly within its bounds.
+        The drawn values are set on the underlying model so that a
+        subsequent call to ``experiment.reflectivity()`` produces the
+        synthetic 'truth' for this realization.
+
+        Args:
+            rng: Explicit NumPy random generator.  When ``None`` a new
+                 unseeded generator is created.  Pass an explicit
+                 generator for reproducibility and parallel safety.
+
+        Returns:
+            Dict mapping parameter name to the drawn value.
+        """
+        if rng is None:
+            rng = np.random.default_rng()
+        drawn: dict[str, float] = {}
+        for param in self.problem.parameters:
+            pmin, pmax = param.bounds
+            value = rng.uniform(pmin, pmax)
+            param.value = value
+            drawn[param.name] = float(value)
+        self.problem.model_update()
+        return drawn
+
+    def restore_parameter_values(self, saved: dict[str, float]) -> None:
+        """Restore fitted parameters to previously saved values.
+
+        Args:
+            saved: Dict mapping parameter name to value, as returned
+                by :meth:`draw_truth_from_prior` or built manually.
+        """
+        for param in self.problem.parameters:
+            if param.name in saved:
+                param.value = saved[param.name]
+        self.problem.model_update()
+
     # ------------------------------------------------------------------
     # Posterior entropy
     # ------------------------------------------------------------------

@@ -165,3 +165,101 @@ class TestInspectModel:
         for p in info["variable"]:
             lo, hi = p["bounds"]
             assert hi > lo
+
+
+# ── experiment & optimization validation ─────────────────────────
+
+
+class TestExperimentValidation:
+    def test_valid_experiment_section(self):
+        desc = load_model_description("examples/models/layer_a_on_b.yaml")
+        expt = desc.get("experiment", {})
+        assert expt["q_min"] == 0.008
+        assert expt["q_points"] == 50
+
+    def test_unknown_experiment_key_raises(self, tmp_path):
+        bad = tmp_path / "model.yaml"
+        bad.write_text(
+            yaml.dump(
+                {
+                    "layers": [{"name": "air", "rho": 0}, {"name": "Si", "rho": 2.07}],
+                    "experiment": {"banana": 42},
+                }
+            )
+        )
+        with pytest.raises(ValueError, match="Unknown keys.*experiment"):
+            load_model_description(str(bad))
+
+    def test_q_min_gte_q_max_raises(self, tmp_path):
+        bad = tmp_path / "model.yaml"
+        bad.write_text(
+            yaml.dump(
+                {
+                    "layers": [{"name": "air", "rho": 0}, {"name": "Si", "rho": 2.07}],
+                    "experiment": {"q_min": 0.5, "q_max": 0.1},
+                }
+            )
+        )
+        with pytest.raises(ValueError, match="q_min"):
+            load_model_description(str(bad))
+
+    def test_q_points_out_of_range_raises(self, tmp_path):
+        bad = tmp_path / "model.yaml"
+        bad.write_text(
+            yaml.dump(
+                {
+                    "layers": [{"name": "air", "rho": 0}, {"name": "Si", "rho": 2.07}],
+                    "experiment": {"q_points": 2},
+                }
+            )
+        )
+        with pytest.raises(ValueError, match="q_points"):
+            load_model_description(str(bad))
+
+
+class TestOptimizationValidation:
+    def test_valid_optimization_section(self):
+        desc = load_model_description("examples/models/layer_a_on_b.yaml")
+        opt = desc["optimization"]
+        assert opt["param"] == "layer_B thickness"
+        assert isinstance(opt["param_values"], list)
+        assert len(opt["param_values"]) > 0
+
+    def test_unknown_optimization_key_raises(self, tmp_path):
+        bad = tmp_path / "model.yaml"
+        bad.write_text(
+            yaml.dump(
+                {
+                    "layers": [{"name": "air", "rho": 0}, {"name": "Si", "rho": 2.07}],
+                    "optimization": {"nonsense": True},
+                }
+            )
+        )
+        with pytest.raises(ValueError, match="Unknown keys.*optimization"):
+            load_model_description(str(bad))
+
+    def test_bad_entropy_method_raises(self, tmp_path):
+        bad = tmp_path / "model.yaml"
+        bad.write_text(
+            yaml.dump(
+                {
+                    "layers": [{"name": "air", "rho": 0}, {"name": "Si", "rho": 2.07}],
+                    "optimization": {"entropy_method": "bogus"},
+                }
+            )
+        )
+        with pytest.raises(ValueError, match="entropy_method"):
+            load_model_description(str(bad))
+
+    def test_empty_param_values_raises(self, tmp_path):
+        bad = tmp_path / "model.yaml"
+        bad.write_text(
+            yaml.dump(
+                {
+                    "layers": [{"name": "air", "rho": 0}, {"name": "Si", "rho": 2.07}],
+                    "optimization": {"param_values": []},
+                }
+            )
+        )
+        with pytest.raises(ValueError, match="param_values"):
+            load_model_description(str(bad))
