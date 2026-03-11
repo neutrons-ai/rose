@@ -130,3 +130,51 @@ the arbitrary choice of initial parameter values.
 - **cli.py**: `_validate_output_path()` rejects `..` in output dir; experiment/optimization bounds now enforced in model_loader validation functions rather than Click IntRange
 - **experiment_design.py**: KDE fallback now logs full traceback at DEBUG level
 - **No remaining code execution risk**: importlib fully removed
+
+## Phase 2 — Text-to-Model Planning (LLM)
+
+### Architecture
+- **Plain-text input**: User provides a free-text description (.txt file) of their sample, hypothesis, and what to optimise. No structured query schema — the LLM infers everything (layer stack, SLD values, fit ranges, optimisation target, candidate values, instrument settings).
+- **PlanQuery** (Pydantic): Single field `description: str` (min 10 chars, max 10000). `load_query()` accepts `.txt` (whole file) or `.yaml` (reads `description` key).
+- **SLD database** (`sld_database.py`): Uses `periodictable` (bundled with refl1d) for neutron SLD computation. ~60 material aliases, ~20 compound densities, special-case air/vacuum = 0.0.
+- **LLM pipeline**: Plain text → system prompt (YAML schema + SLD table) + user prompt → LangChain ChatOpenAI → YAML model → validator → retry loop (up to `max_retries`).
+- **`.env` loading**: The CLI `main()` group calls `load_dotenv()` at startup so all subcommands pick up settings from `.env`. The `plan` and `plan-and-optimize` commands read `LLM_MODEL`, `LLM_TEMPERATURE`, `LLM_API_KEY`, `LLM_BASE_URL`, and `LLM_MAX_TOKENS` from the environment (CLI flags override).
+- **ALCF provider support**: When `LLM_PROVIDER=alcf`, `_get_llm_config()` automatically sets the base URL to the ALCF Sophia (or Metis) inference endpoint and falls back to `ALCF_ACCESS_TOKEN` for auth. `generate_model_yaml()` accepts `base_url` and `max_tokens` parameters.
+- **Validator** (`validator.py`): Schema-level validation without building the full refl1d experiment. Checks layer structure, fit ranges, param references, experiment bounds. Accepts `description` as a top-level key. Fast enough for the LLM retry loop.
+- **No code execution**: LLM generates declarative YAML, not Python. The generated output is validated and parsed with `yaml.safe_load` only.
+- **`description` field in model YAML**: The LLM is instructed to include a `description` field in the generated model YAML. Both the validator and model_loader accept and ignore it. Example model YAMLs now include `description`.
+
+### CLI commands
+- `rose plan QUERY_FILE` — Generate a ROSE YAML model from a plain-text description via LLM. QUERY_FILE is a `.txt` or `.yaml` file. Options: `--output`, `--model-name`, `--temperature`, `--verbose`. Defaults for model/temperature come from `.env`.
+- `rose plan-and-optimize QUERY_FILE` — Generate model then immediately run optimisation. Options include `--data-file` for measured data. Combines `plan` + `optimize`.
+- `rose check-llm` — Check LLM configuration and connectivity. Shows provider, model, and credential status. For ALCF provider, shows Globus token availability instead of API key. For OpenAI/local, shows masked API key. Options: `--no-test`, `--json`, `--fix` (ALCF: download and run auth script). Reads `LLM_PROVIDER`, `LLM_MODEL`, `LLM_API_KEY` / `OPENAI_API_KEY`, `LLM_BASE_URL`, `LLM_TEMPERATURE`, `ALCF_ACCESS_TOKEN`, `ALCF_CLUSTER` from environment.
+
+### Key design decisions
+- **Plain text input (AuRE-style)**: The original structured query YAML (sample/layers/optimize/experiment) was simplified to plain text because the query was nearly as complex as the model YAML itself. Inspired by AuRE's approach where users write a paragraph and the LLM infers the full model.
+- **YAML generation, not code generation**: The LLM outputs YAML model files (same schema as hand-authored Phase 1 models), not Python code. This eliminates code execution risk and leverages existing validation pipeline.
+- **SLD reference table in prompt**: The system prompt includes a dynamically generated SLD reference table from the database so the LLM has accurate values.
+- **Retry with error feedback**: If the LLM produces invalid YAML, the validator errors are fed back as a follow-up message and the LLM retries.
+- **Markdown fence stripping**: LLMs often wrap output in ```yaml fences; `_strip_markdown_fences()` handles this.
+- **ALCF Globus token authentication**: ALCF does not use API keys. Authentication uses Globus access tokens with 3-tier resolution: (1) `ALCF_ACCESS_TOKEN` env var, (2) `globus_sdk` UserApp if installed, (3) subprocess fallback to `inference_auth_token.py get_access_token`. The `_get_alcf_token()` function raises `RuntimeError` if all methods fail. `_alcf_token_available()` is a silent boolean check. ALCF cluster endpoints: sophia = `https://inference-api.alcf.anl.gov/resource_server/sophia/vllm/v1`, metis = `https://inference-api.alcf.anl.gov/resource_server/metis/api/v1`. Auth helper script: `https://raw.githubusercontent.com/argonne-lcf/inference-endpoints/refs/heads/main/inference_auth_token.py`. The `plan` and `plan-and-optimize` commands resolve the token via `_get_alcf_token()` when provider is ALCF.
+- **Reflection geometry awareness**: The system prompt guides the LLM to infer front vs back reflection from the measurement environment. "Measured in air/vacuum" → front reflection (air first, substrate last). "Measured against a liquid" (D₂O, THF, etc.) → back reflection (liquid first, substrate last). The user can override by explicitly stating the beam direction. This determines which layer is listed first in the generated YAML.
+
+### Module structure
+```
+src/rose/modeler/
+  __init__.py
+  schema.py          — PlanQuery(description: str) + load_query()
+  sld_database.py    — Material SLD lookup (periodictable)
+  prompts.py         — System & user prompt templates
+  llm_generator.py   — LangChain chain: description → YAML model
+  validator.py       — YAML model schema validator
+```
+
+### Test coverage (Phase 2)
+- 65 Phase 2 tests + 83 Phase 1 = 148 total, all passing
+- Covers: SLD database (resolve, compute, lookup, list), query schema (description validation, .txt loading, .yaml loading, unsupported format, file not found), validator (valid models, missing keys, bad ranges, unknown layers), prompts, CLI help, markdown fence stripping, mocked LLM generation (success, retry, max-retries failure), check-llm (help, key present, key missing, JSON output, key masking, missing deps, ALCF token present, ALCF no token, ALCF JSON output)
+
+### Dependencies
+- `langchain>=0.3.0`, `langchain-openai>=0.2.0`, `pydantic>=2.4.0`, `python-dotenv>=1.0.0` in `[llm]` optional extras
+- `python-dotenv>=1.0.0` also in `[cli]` extras
+- `periodictable` comes transitively via `refl1d` ≥ 1.0.0
+- `globus_sdk` optional — used for ALCF token resolution if installed

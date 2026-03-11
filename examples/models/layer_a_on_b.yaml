@@ -14,6 +14,10 @@
 #   - layer_B thickness (default 50 Å — this is what you optimise over)
 
 name: Layer A on Layer B
+description: >
+  Layer A on top of layer B on a silicon substrate.
+  Find the best thickness of layer B to be sensitive to
+  changes in the thickness of layer A.
 
 layers:
   - name: air

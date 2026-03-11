@@ -1,0 +1,10 @@
+Copper thin film (~50 nm) on a titanium adhesion layer (~5 nm) on a silicon substrate, measured in THF.
+There is a copper oxide (~3 nm) on top of the copper (THF side).
+
+The incoming beam is coming from the silicon side. The copper and titanium SLD can be considered fixed.
+The copper oxide thickness, roughness and SLD are uncertain.
+The THF could be either protonated or deuterated.
+
+Find the optimal deuteration ratio of the THF to maximise sensitivity
+to changes in the copper oxide thickness, roughness, and SLD.
+Evaluate the deuteration ratio between 0 and 1 in steps of 20%.

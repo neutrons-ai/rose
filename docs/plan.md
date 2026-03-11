@@ -153,9 +153,15 @@
 
 ---
 
-## Phase 2: CLI for Use-Case 2 (Text-to-Model Planning)
+## Phase 2: CLI for Use-Case 2 (Text-to-Model Planning) ✅ COMPLETE
 
-**Goal**: From a YAML text description of sample geometry and hypothesis, generate a refl1d model using an LLM, then feed it into the Phase 1 optimizer.
+**Status**: Implemented. 51 new tests (134 total), all passing.
+
+**Adaptation from original plan**: The LLM now generates declarative YAML
+model files (same schema as Phase 1 hand-authored models) instead of Python code.
+This eliminates code execution risk and leverages the existing validator pipeline.
+
+**Goal**: From a YAML text description of sample geometry and hypothesis, generate a refl1d YAML model using an LLM, then feed it into the Phase 1 optimizer.
 
 ### 2A — YAML Input Schema (2 steps)
 

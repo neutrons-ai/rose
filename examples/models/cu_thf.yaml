@@ -4,6 +4,10 @@
 # Sample stack (top to bottom): THF | material | Cu | Ti | Si
 
 name: Cu/material/THF
+description: >
+  Unknown material film on a Cu/Ti bilayer on a silicon substrate,
+  measured in THF solvent.  Determine which THF SLD contrast best
+  reveals the material layer's SLD and thickness.
 
 layers:
   - name: THF

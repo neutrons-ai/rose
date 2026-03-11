@@ -1,0 +1,8 @@
+Protein adsorption experiment at a silicon/water interface.
+A thin SiO2 native oxide (~15 Å) sits on the silicon substrate.
+The protein adsorbs on top (estimated ~30 Å, but very uncertain),
+and the whole system is immersed in deuterated water (D2O).
+Both the protein layer thickness and SLD are unknown.
+
+Determine which protein layer thickness best reveals the protein
+SLD and coverage.  Sweep protein thicknesses from 10 to 80 Å.

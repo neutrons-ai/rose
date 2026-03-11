@@ -1,0 +1,7 @@
+Polystyrene thin film (~50 nm) on a gold adhesion layer deposited on
+a silicon substrate, measured in air.  The polymer film thickness and
+SLD are uncertain.
+
+Find the optimal gold adhesion layer thickness to maximise sensitivity
+to changes in the polymer film thickness.  Evaluate gold thicknesses
+from 50 to 300 Å in steps of 50 Å.
