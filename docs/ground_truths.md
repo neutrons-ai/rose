@@ -178,3 +178,52 @@ src/rose/modeler/
 - `python-dotenv>=1.0.0` also in `[cli]` extras
 - `periodictable` comes transitively via `refl1d` ≥ 1.0.0
 - `globus_sdk` optional — used for ALCF token resolution if installed
+
+## Phase 3 — Flask Web App for Visualization
+
+### Architecture
+- **Flask app factory**: `create_app(results_dir)` in `src/rose/web/__init__.py` — registers a single Blueprint, sets `RESULTS_DIR` config, `secret_key = "rose-web"`.
+- **Blueprint pattern**: Single blueprint `bp` in `routes.py` with page routes and JSON API endpoints.
+- **Data layer**: `ResultData` class in `data.py` — lazy-loads `optimization_results.json`, provides `get_summary()`, `get_info_gain()`, `get_reflectivity(index)`, `get_sld(index)`, `get_settings()`, `get_model_yaml()`. `list_results(results_dir)` scans for subdirectories containing the JSON file.
+- **Path traversal protection**: `_find_result()` rejects `..`, `/`, `\` in result IDs.
+- **AuRE visual design replicated**: Dark navbar (`bg-dark`, `navbar-dark`), `<i class="bi bi-layers"></i> ROSE` brand (no image logo, same as AuRE), light gray background (`#f8f9fa`), white cards with `box-shadow: 0 1px 3px rgba(0,0,0,0.08)`, no borders.
+- **CDN dependencies**: Bootstrap 5.3.3, Bootstrap Icons 1.11.3, Plotly 2.35.0, all loaded from CDN.
+
+### Routes
+- **Page routes**: `GET /` (index listing), `GET /results/<id>` (detail with Plotly charts), `GET /results/<id>/model` (YAML viewer).
+- **JSON APIs**: `GET /api/results` (summary list), `GET /api/results/<id>/info-gain`, `/reflectivity?index=N`, `/sld?index=N`, `/settings`, `/summary`.
+
+### Templates
+- `base.html` — Bootstrap 5.3 layout matching AuRE (dark navbar, `bi-layers` icon, Plotly CDN, `container-fluid`).
+- `index.html` — Results listing with Bootstrap cards, summary stats per result, links to detail/model views, empty state with instructions.
+- `result.html` — Detail page: breadcrumb nav, summary card row, interactive info gain chart (Plotly line+markers with error bars, star at optimal), parameter selector dropdown, R(Q) log-log chart (true + noisy reflectivity), SLD profile chart (with 90% CL bands), settings table. JavaScript fetches data from JSON APIs.
+- `model.html` — Model YAML viewer: breadcrumb, YAML source in `<pre><code>`, settings table.
+
+### CLI
+- `rose serve RESULTS_DIR` — Start the Flask web app. `RESULTS_DIR` defaults to `results`. Options: `--port` (default 5000), `--no-browser`. Auto-opens browser unless `--no-browser`.
+
+### Module structure
+```
+src/rose/web/
+  __init__.py       — create_app() factory
+  data.py           — ResultData class, list_results()
+  routes.py         — Blueprint: page routes + JSON APIs
+  templates/
+    base.html       — AuRE-matching Bootstrap 5.3 layout
+    index.html      — Results listing
+    result.html     — Detail page with Plotly charts
+    model.html      — Model YAML viewer
+  static/
+    style.css       — Minimal CSS overrides (AuRE-matching)
+```
+
+### Test coverage (Phase 3)
+- 27 Phase 3 tests + 83 Phase 1 + Phase 2 = 110 total, all passing
+- **TestPageRoutes** (8): index 200, shows result name/parameter, detail 200/shows parameter/404, model 200/404, path traversal rejected
+- **TestAPIRoutes** (9): results list, info-gain, reflectivity (default/explicit/out-of-range), SLD, settings, summary, 404 for missing
+- **TestResultData** (9): exists true/false, summary, info_gain, model_yaml present/missing, list_results/empty/nonexistent
+- **TestServeCLI** (1): `rose serve --help` shows correct options
+
+### Dependencies
+- `flask>=3.0.0` in `[web]` extras (pyproject.toml)
+- `plotly` CDN-loaded (no Python dependency needed — charts are rendered client-side via JSON API)

@@ -967,5 +967,61 @@ def plan_and_optimize(
     )
 
 
+# ── serve ────────────────────────────────────────────────────────
+
+
+@main.command()
+@click.argument(
+    "results_dir",
+    type=click.Path(exists=True),
+    default="results",
+)
+@click.option(
+    "--port",
+    "-p",
+    default=5000,
+    type=int,
+    help="Port to run the web server on (default: 5000)",
+)
+@click.option(
+    "--no-browser",
+    is_flag=True,
+    help="Don't open a browser automatically",
+)
+def serve(results_dir: str, port: int, no_browser: bool) -> None:
+    """Launch the ROSE web interface to browse optimization results.
+
+    RESULTS_DIR is the directory containing optimization output
+    (with ``optimization_results.json`` files).  Defaults to
+    ``results/`` in the current directory.
+
+    \b
+    Examples:
+        rose serve
+        rose serve results/
+        rose serve my_output --port 8080
+        rose serve results/ --no-browser
+    """
+    from rose.web import create_app
+
+    click.echo(click.style("═" * 60, fg="blue"))
+    click.echo(click.style("  ROSE – Results Viewer", fg="blue", bold=True))
+    click.echo(click.style("═" * 60, fg="blue"))
+    click.echo()
+    click.echo(f"  Results dir: {results_dir}")
+    click.echo(f"  URL:         http://127.0.0.1:{port}")
+    click.echo()
+
+    app = create_app(results_dir)
+
+    if not no_browser:
+        import threading
+        import webbrowser
+
+        threading.Timer(1.0, webbrowser.open, args=[f"http://127.0.0.1:{port}"]).start()
+
+    app.run(host="127.0.0.1", port=port, debug=False)
+
+
 if __name__ == "__main__":
     main()

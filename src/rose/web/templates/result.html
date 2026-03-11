@@ -1,0 +1,306 @@
+{% extends "base.html" %}
+
+{% block title %}{{ summary.parameter }} – Results{% endblock %}
+
+{% block content %}
+
+{# ── Header ──────────────────────────────────────────────────── #}
+<div class="row mb-3">
+    <div class="col">
+        <nav aria-label="breadcrumb">
+            <ol class="breadcrumb mb-1">
+                <li class="breadcrumb-item">
+                    <a href="{{ url_for('web.index') }}">Results</a>
+                </li>
+                <li class="breadcrumb-item active">{{ result_id }}</li>
+            </ol>
+        </nav>
+        <h4>
+            <i class="bi bi-bar-chart-line"></i>
+            Optimization: <strong>{{ summary.parameter }}</strong>
+        </h4>
+    </div>
+</div>
+
+{# ── Summary cards ───────────────────────────────────────────── #}
+<div class="row mb-3">
+    <div class="col">
+        <div class="card">
+            <div class="card-body py-2">
+                <div class="row text-center">
+                    <div class="col-md-3">
+                        <small class="text-muted">Optimized parameter</small><br />
+                        <strong>{{ summary.parameter }}</strong>
+                    </div>
+                    <div class="col-md-2">
+                        <small class="text-muted">Optimal value</small><br />
+                        <strong>
+                            {% if summary.optimal_value is not none %}
+                            {{ "%.4g" | format(summary.optimal_value) }}
+                            {% else %}—{% endif %}
+                        </strong>
+                    </div>
+                    <div class="col-md-2">
+                        <small class="text-muted">Max info gain</small><br />
+                        <strong>
+                            {% if summary.max_information_gain is not none %}
+                            {{ "%.3f" | format(summary.max_information_gain) }} bits
+                            {% else %}—{% endif %}
+                        </strong>
+                    </div>
+                    <div class="col-md-2">
+                        <small class="text-muted">Values tested</small><br />
+                        <strong>{{ summary.num_values }}</strong>
+                    </div>
+                    <div class="col-md-2">
+                        <small class="text-muted">Realizations</small><br />
+                        <strong>{{ summary.num_realizations }}</strong>
+                    </div>
+                    <div class="col-md-1 d-flex align-items-center justify-content-end">
+                        {% if has_model %}
+                        <a href="{{ url_for('web.model_view', result_id=result_id) }}"
+                            class="btn btn-outline-secondary btn-sm" title="View model">
+                            <i class="bi bi-file-earmark-code"></i>
+                        </a>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+{# ── Information Gain Chart ──────────────────────────────────── #}
+<div class="row mb-3">
+    <div class="col">
+        <div class="card">
+            <div class="card-header fw-semibold">
+                <i class="bi bi-graph-up"></i> Information Gain
+            </div>
+            <div class="card-body p-0">
+                <div id="info-gain-chart" style="height:380px;"></div>
+            </div>
+        </div>
+    </div>
+</div>
+
+{# ── Parameter value selector ────────────────────────────────── #}
+<div class="row mb-3">
+    <div class="col-auto">
+        <label for="param-select" class="form-label fw-semibold">
+            View reflectivity &amp; SLD for parameter value:
+        </label>
+        <select id="param-select" class="form-select form-select-sm" style="max-width:220px;display:inline-block"
+            onchange="loadParamData()">
+            {% for v in param_values %}
+            <option value="{{ loop.index0 }}" {% if loop.index0==0 %}selected{% endif %}>
+                {{ "%.4g" | format(v) }}
+            </option>
+            {% endfor %}
+        </select>
+    </div>
+</div>
+
+{# ── Reflectivity & SLD Charts ──────────────────────────────── #}
+<div class="row mb-3">
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header fw-semibold">
+                <i class="bi bi-activity"></i> Reflectivity R(Q)
+            </div>
+            <div class="card-body p-0">
+                <div id="rq-chart" style="height:380px;"></div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header fw-semibold">
+                <i class="bi bi-layers"></i> SLD Depth Profile
+            </div>
+            <div class="card-body p-0">
+                <div id="sld-chart" style="height:380px;"></div>
+            </div>
+        </div>
+    </div>
+</div>
+
+{# ── Settings ────────────────────────────────────────────────── #}
+{% if settings %}
+<div class="row mb-3">
+    <div class="col-lg-6">
+        <div class="card">
+            <div class="card-header fw-semibold">
+                <i class="bi bi-gear"></i> Optimization Settings
+            </div>
+            <div class="card-body">
+                <table class="table table-sm table-borderless mb-0">
+                    <tbody>
+                        {% for key, val in settings.items() %}
+                        <tr>
+                            <td class="text-muted" style="width:50%">{{ key }}</td>
+                            <td class="fw-semibold">{{ val }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+    const RESULT_ID = {{ result_id | tojson }};
+    const COLORS = [
+        "#0d6efd", "#198754", "#dc3545", "#fd7e14",
+        "#6610f2", "#20c997", "#d63384", "#6c757d",
+    ];
+
+    document.addEventListener("DOMContentLoaded", () => {
+        renderInfoGain();
+        loadParamData();
+    });
+
+    async function renderInfoGain() {
+        const resp = await fetch(`/api/results/${RESULT_ID}/info-gain`);
+        const data = await resp.json();
+
+        const trace = {
+            x: data.values,
+            y: data.info_gain,
+            error_y: {
+                type: "data",
+                array: data.info_gain_std,
+                visible: true,
+                color: "#0d6efd",
+            },
+            mode: "lines+markers",
+            marker: { size: 8, color: "#0d6efd" },
+            line: { width: 2, color: "#0d6efd" },
+            name: "Information Gain",
+        };
+
+        // Highlight optimal value
+        const traces = [trace];
+        if (data.optimal_value != null) {
+            traces.push({
+                x: [data.optimal_value],
+                y: [data.max_information_gain],
+                mode: "markers",
+                marker: { size: 14, color: "#dc3545", symbol: "star" },
+                name: `Optimal: ${data.optimal_value}`,
+                showlegend: true,
+            });
+        }
+
+        const layout = {
+            margin: { l: 60, r: 20, t: 10, b: 50 },
+            xaxis: { title: data.parameter },
+            yaxis: { title: "Information Gain (bits)" },
+            hovermode: "closest",
+            legend: { x: 0.02, y: 0.98 },
+        };
+
+        Plotly.newPlot("info-gain-chart", traces, layout, { responsive: true });
+    }
+
+    async function loadParamData() {
+        const idx = document.getElementById("param-select").value;
+        const [rqResp, sldResp] = await Promise.all([
+            fetch(`/api/results/${RESULT_ID}/reflectivity?index=${idx}`),
+            fetch(`/api/results/${RESULT_ID}/sld?index=${idx}`),
+        ]);
+        const rqData = await rqResp.json();
+        const sldData = await sldResp.json();
+
+        renderReflectivity(rqData);
+        renderSLD(sldData);
+    }
+
+    function renderReflectivity(data) {
+        const traces = [];
+        data.realizations.forEach((r, i) => {
+            // True reflectivity
+            traces.push({
+                x: r.q,
+                y: r.reflectivity,
+                mode: "lines",
+                line: { width: 2, color: COLORS[i % COLORS.length] },
+                name: `R${i + 1} (true)`,
+            });
+            // Noisy data points
+            if (r.noisy_reflectivity && r.noisy_reflectivity.length) {
+                traces.push({
+                    x: r.q,
+                    y: r.noisy_reflectivity,
+                    error_y: r.errors.length
+                        ? { type: "data", array: r.errors, visible: true }
+                        : undefined,
+                    mode: "markers",
+                    marker: {
+                        size: 3,
+                        color: COLORS[i % COLORS.length],
+                        opacity: 0.5,
+                    },
+                    name: `R${i + 1} (noisy)`,
+                    showlegend: false,
+                });
+            }
+        });
+
+        const layout = {
+            margin: { l: 60, r: 20, t: 10, b: 50 },
+            xaxis: { title: "Q (Å⁻¹)", type: "log" },
+            yaxis: { title: "R(Q)", type: "log" },
+            hovermode: "closest",
+            showlegend: true,
+            legend: { x: 0.02, y: 0.02, font: { size: 10 } },
+        };
+
+        Plotly.newPlot("rq-chart", traces, layout, { responsive: true });
+    }
+
+    function renderSLD(data) {
+        const traces = [];
+        data.realizations.forEach((r, i) => {
+            const color = COLORS[i % COLORS.length];
+            // Best fit SLD
+            traces.push({
+                x: r.z,
+                y: r.sld_best,
+                mode: "lines",
+                line: { width: 2, color: color },
+                name: `R${i + 1} (best)`,
+            });
+            // Confidence band
+            if (r.sld_low.length && r.sld_high.length) {
+                traces.push({
+                    x: r.z.concat([...r.z].reverse()),
+                    y: r.sld_high.concat([...r.sld_low].reverse()),
+                    fill: "toself",
+                    fillcolor: color + "20",
+                    line: { width: 0 },
+                    name: `R${i + 1} (90% CL)`,
+                    showlegend: false,
+                    hoverinfo: "skip",
+                });
+            }
+        });
+
+        const layout = {
+            margin: { l: 60, r: 20, t: 10, b: 50 },
+            xaxis: { title: "z (Å)" },
+            yaxis: { title: "SLD (×10⁻⁶ Å⁻²)" },
+            hovermode: "closest",
+            showlegend: true,
+            legend: { x: 0.02, y: 0.98, font: { size: 10 } },
+        };
+
+        Plotly.newPlot("sld-chart", traces, layout, { responsive: true });
+    }
+</script>
+{% endblock %}
