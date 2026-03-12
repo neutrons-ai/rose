@@ -321,62 +321,62 @@ This eliminates code execution risk and leverages the existing validator pipelin
 
 ---
 
-## Phase 4: Interactive Flask App + AuRE Plugin
+## Phase 4: Interactive Flask App + AuRE Plugin ✅
 
 **Goal**: Extend the web app to interactively enter inputs for use-cases 1 and 2. Design for standalone use but structured to be mountable as an AuRE blueprint.
 
+**Status**: Complete. 138 total tests passing. See `docs/ground_truths.md` Phase 4 section for implementation details.
+
 ### 4A — Interactive Input Forms (3 steps)
 
-35. **Create optimization form** (`templates/optimize.html`):
-    - Upload or select model file
-    - Interactive parameter selection (checkboxes for which to optimize)
-    - Slider/inputs for parameter value ranges
-    - Settings: realizations, MCMC steps, entropy method
-    - Submit → runs optimization as background task
+35. ✅ **Create optimization form** (`templates/optimize.html`):
+    - Model file selector with server-side file browser modal
+    - Optional data file selector, output directory picker
+    - Parallel/sequential toggle switch
+    - Submit → runs optimization as background daemon thread
+    - Progress panel with status badge, progress bar, "View Results" link
 
-36. **Create planning form** (`templates/plan.html`):
-    - YAML editor (textarea with syntax highlighting) or structured form
-    - Sample geometry builder (add/remove layers, set materials from SLD database)
-    - Hypothesis text input
-    - "Generate Model" button → shows generated model for review
-    - "Approve & Optimize" button → runs pipeline
+36. ✅ **Create planning form** (`templates/plan.html`):
+    - Sample description textarea (plain text, like AuRE's approach)
+    - Optional data file, output directory, parallel toggle
+    - "Generate Model & Optimize" button → LLM generates YAML, then runs optimization
+    - Same progress panel pattern as optimize.html
 
-37. **Add background task execution**:
-    - Thread-based task runner (similar to AuRE's pattern)
-    - SSE or polling endpoint for progress updates
-    - `POST /api/optimize` — start optimization job
+37. ✅ **Add background task execution**:
+    - Thread-based task runner (daemon threads, AuRE's `RUN_STATE` pattern)
+    - Polling endpoint for progress updates (2s interval)
+    - `POST /api/jobs/optimize` — start optimization job
+    - `POST /api/jobs/plan` — start plan-and-optimize job
     - `GET /api/jobs/<id>/status` — poll progress
-    - `GET /api/jobs/<id>/result` — get completed result
+    - File browser APIs: `/api/browse-files`, `/api/browse-dirs`
 
 ### 4B — AuRE Plugin Structure (2 steps)
 
-38. **Structure ROSE web as a standalone Blueprint**:
-    - `src/rose/web/blueprint.py` — self-contained blueprint with `url_prefix="/rose"`
-    - All templates namespaced under `rose/`
+38. ✅ **Structure ROSE web as a standalone Blueprint**:
+    - `register_with_aure(app, url_prefix="/rose")` in `src/rose/web/__init__.py`
+    - Existing Blueprint reused (no separate blueprint.py needed)
+    - Templates namespaced under `rose/` template folder
     - Static assets under `rose/static/`
-    - `register_with_aure(app)` function that registers the blueprint
 
-39. **Create MCP tool integration** in `src/rose/mcp_tools.py`:
-    - `@mcp.tool()` decorated functions for AuRE's MCP server
-    - `optimize_experiment()` — run use-case 1 from MCP
-    - `plan_experiment()` — run use-case 2 from MCP
-    - Can be imported and registered in AuRE's mcp_server.py
+39. ⏳ **Create MCP tool integration** — Deferred:
+    - Requires FastMCP and AuRE's MCP server to be ready
+    - Can be added when AuRE integration is actively developed
 
 ### 4C — Tests (1 step)
 
-40. **Interactive feature tests**: `tests/web/test_interactive.py`
-    - Test form submission
-    - Test job creation and status polling
-    - Test blueprint registration standalone and with mock AuRE app
+40. ✅ **Interactive feature tests**: `tests/test_web_interactive.py`
+    - 28 tests: page routes, file browser APIs (incl. security), job validation + happy paths, status polling, plugin registration
+    - TestInteractivePages (5), TestBrowseAPI (10), TestJobAPI (10), TestPluginRegistration (3)
 
 ### Relevant Files
 
-- `src/rose/web/routes.py` — extend with interactive endpoints
-- `src/rose/web/templates/` — new templates (optimize.html, plan.html)
-- `src/rose/web/blueprint.py` — AuRE-mountable blueprint
-- `src/rose/mcp_tools.py` — MCP tool definitions
-- Reference: AuRE repo `src/aure/web/routes.py` — Flask UI patterns
-- Reference: AuRE repo `src/aure/mcp_server.py` — MCP tool patterns
+- `src/rose/web/routes.py` — extended with interactive endpoints + background runners
+- `src/rose/web/__init__.py` — `register_with_aure()` added
+- `src/rose/web/templates/optimize.html` — optimization setup form
+- `src/rose/web/templates/plan.html` — LLM planning form
+- `src/rose/web/templates/_browser_modal.html` — shared file browser modal
+- `src/rose/web/static/setup.js` — file browser, form persistence, job polling
+- `tests/test_web_interactive.py` — Phase 4 tests
 
 ### Verification
 

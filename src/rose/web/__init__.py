@@ -11,9 +11,16 @@ Or via the CLI::
 
     rose serve results/
     rose serve results/ --port 8080
+
+AuRE plugin usage::
+
+    from rose.web import register_with_aure
+    register_with_aure(aure_app)
 """
 
 from __future__ import annotations
+
+import threading
 
 from flask import Flask
 
@@ -33,6 +40,22 @@ def create_app(results_dir: str | None = None) -> Flask:
     """
     app = Flask(__name__)
     app.config["RESULTS_DIR"] = results_dir
+    app.config["JOBS"] = {}  # job_id → job state dict
+    app.config["JOBS_LOCK"] = threading.Lock()
     app.secret_key = "rose-web"
     app.register_blueprint(bp)
     return app
+
+
+def register_with_aure(app: Flask, url_prefix: str = "/rose") -> None:
+    """Register the ROSE blueprint with an existing Flask app (e.g. AuRE).
+
+    Args:
+        app: The Flask application to mount ROSE onto.
+        url_prefix: URL prefix for all ROSE routes (default ``/rose``).
+    """
+    if "JOBS" not in app.config:
+        app.config["JOBS"] = {}
+    if "JOBS_LOCK" not in app.config:
+        app.config["JOBS_LOCK"] = threading.Lock()
+    app.register_blueprint(bp, url_prefix=url_prefix)

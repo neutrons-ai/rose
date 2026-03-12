@@ -227,3 +227,66 @@ src/rose/web/
 ### Dependencies
 - `flask>=3.0.0` in `[web]` extras (pyproject.toml)
 - `plotly` CDN-loaded (no Python dependency needed — charts are rendered client-side via JSON API)
+
+## Phase 4 — Interactive Web App + AuRE Plugin
+
+### Architecture
+- **Job management**: `JOBS` dict + `JOBS_LOCK` (`threading.Lock`) stored in `app.config`. Thread-safe updates via `_update_job()` helper. Pattern adopted from AuRE's `RUN_STATE` approach.
+- **Background execution**: Daemon threads (`threading.Thread(daemon=True)`) for optimization and planning jobs. Each job gets a UUID-based ID (`uuid4()[:8]`).
+- **Job lifecycle**: `POST /api/jobs/optimize` or `/api/jobs/plan` → validates inputs → creates job dict (`status: running`) → spawns daemon thread → returns `{job_id}`. Client polls `GET /api/jobs/<id>/status` every 2s. Job transitions: `running` → `complete` (with `result_dir`) or `error` (with message).
+- **File browser**: Server-side directory listing following AuRE's pattern. `_safe_browse_path()` validates paths (must exist, must be a directory). Hidden files (starting with `.`) excluded.
+- **AuRE plugin**: `register_with_aure(app, url_prefix="/rose")` registers the ROSE Blueprint with a URL prefix, initializes JOBS/JOBS_LOCK if not already present. Allows ROSE to be mounted inside AuRE at `/rose/`.
+- **Form persistence**: Client-side `localStorage` saves form state (model file path, output dir, parallel toggle) across page reloads.
+- **No new dependencies**: Phase 4 extends Phase 3's Flask app — no additional Python packages required.
+
+### Routes (new in Phase 4)
+- **Page routes**: `GET /optimize` (optimization form), `GET /plan` (LLM planning form)
+- **File browser APIs**: `GET /api/browse-files?path=X&ext=.yaml` (files + dirs), `GET /api/browse-dirs?path=X` (dirs only)
+- **Job APIs**: `POST /api/jobs/optimize`, `POST /api/jobs/plan`, `GET /api/jobs/<id>/status`
+
+### Input validation
+- **Optimize job**: Requires `model_file` (must exist, `.yaml`/`.yml`/`.json` extension) and `output_dir` (non-empty). Optional `data_file` (must exist if provided). Optional `parallel` boolean.
+- **Plan job**: Requires `description` (min 10 chars) and `output_dir`. Optional `data_file`. The description is sent to the LLM to generate a model YAML, then optimization runs automatically.
+- **File browser**: `_safe_browse_path()` rejects nonexistent paths and non-directories. Returns 400 with error message on invalid paths. `PermissionError` caught and returns empty entries.
+
+### Background runners
+- **`_run_optimize_job()`**: Loads model via `load_model_description()` + `build_experiment()`, creates `ExperimentDesigner`, runs `optimize_sequential()` or `optimize_parallel()`, saves results (JSON + plots), copies model YAML to output dir, updates `RESULTS_DIR`.
+- **`_run_plan_job()`**: Reads LLM config from env (`LLM_MODEL`, `LLM_API_KEY`, `LLM_BASE_URL`, `LLM_TEMPERATURE`, `LLM_MAX_TOKENS`, `LLM_PROVIDER`), calls `generate_model_yaml()`, writes generated YAML to temp file, then delegates to `_run_optimize_job()`.
+- **Error handling**: Both runners wrap execution in try/except, updating job status to `error` with the exception message on failure.
+
+### Templates (new in Phase 4)
+- `optimize.html` — Model file selector (with browse modal), optional data file, output directory, parallel toggle, progress panel (status badge, progress text, animated bar, "View Results" link).
+- `plan.html` — Sample description textarea (with example placeholder), optional data file, output directory, parallel toggle, same progress panel pattern.
+- `_browser_modal.html` — Shared Bootstrap modal partial: path breadcrumb, up-arrow navigation, file/folder listing, "Select this folder" button (dir mode). Included by both forms.
+
+### Client-side (`setup.js`)
+- **File browser**: `openBrowser(mode, ext)` → fetches listing from API → renders in modal → selection fills form field. Modes: `"file"` (model YAML), `"datafile"` (data file), `"dir"` (output directory).
+- **Form persistence**: `localStorage` with key `"rose_setup"` — saves/restores model path, data path, output dir, parallel toggle.
+- **Job polling**: `_pollStatus(jobId)` calls status API every 2s (3s on error). Updates progress bar, status badge, and text. On completion: shows "View Results" link. On error: shows error message.
+- **Nav tabs**: Three tabs in dark navbar: Optimize (`bi-sliders`), Plan (`bi-pencil-square`), Results (`bi-folder2-open`). Active tab highlighted via `active_tab` template variable.
+
+### Module structure (Phase 4 additions)
+```
+src/rose/web/
+  __init__.py          — create_app() + register_with_aure()
+  routes.py            — Extended: optimize/plan pages, file browser, job APIs, background runners
+  templates/
+    base.html          — Updated nav with Optimize/Plan/Results tabs
+    optimize.html      — NEW: optimization setup form + progress panel
+    plan.html          — NEW: LLM planning form + progress panel
+    _browser_modal.html — NEW: shared file browser modal partial
+  static/
+    setup.js           — NEW: file browser, form persistence, job launch, polling
+    style.css          — Unchanged
+```
+
+### Test coverage (Phase 4)
+- 28 Phase 4 tests + 110 prior = **138 total, all passing**
+- **TestInteractivePages** (5): optimize/plan page 200, form elements present, nav tabs
+- **TestBrowseAPI** (10): browse-files (home, path, ext filter, nonexistent, path traversal, file-to-parent fallback, permission denied), browse-dirs (listing, parent), hidden files excluded
+- **TestJobAPI** (10): optimize validation (no model, no output, bad data file), plan validation (short desc, no output), status 404, status returns state, internal keys hidden, happy-path optimize accepted, happy-path plan accepted
+- **TestPluginRegistration** (3): register_with_aure default prefix, custom prefix, JOBS config initialized
+
+### Deferred
+- **MCP tool integration** (plan.md step 39): Deferred — requires FastMCP and is a separate integration concern. Can be added later when AuRE's MCP server is ready to consume ROSE tools.
+- **Advanced form features**: Interactive parameter selection with checkboxes, sliders for value ranges, YAML syntax highlighting editor — deferred to future iterations. Current forms cover the essential workflow.

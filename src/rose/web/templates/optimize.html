@@ -1,0 +1,134 @@
+{% extends "base.html" %}
+
+{% block title %}Optimize{% endblock %}
+
+{% block content %}
+
+{# ── Setup Form ──────────────────────────────────────────────── #}
+<div id="setup-section">
+  <div class="row justify-content-center">
+    <div class="col-lg-8 col-xl-6">
+      <div class="card mt-3">
+        <div class="card-header">
+          <h5 class="mb-0"><i class="bi bi-sliders"></i> New Optimization</h5>
+        </div>
+        <div class="card-body">
+          <form id="setup-form" onsubmit="return false;">
+
+            {# Model file #}
+            <div class="mb-3">
+              <label class="form-label fw-semibold">Model File</label>
+              <div class="input-group">
+                <input type="text" id="model-file" class="form-control" readonly
+                       placeholder="Select a YAML model file…" required />
+                <button class="btn btn-outline-secondary" type="button"
+                        onclick="openBrowser('file')">
+                  <i class="bi bi-folder2-open"></i> Browse
+                </button>
+              </div>
+              <div class="form-text">
+                A YAML model file with <code>layers</code>, <code>experiment</code>,
+                and <code>optimization</code> sections.
+              </div>
+            </div>
+
+            {# Data file (optional) #}
+            <div class="mb-3">
+              <label class="form-label fw-semibold">
+                Data File <span class="text-muted fw-normal">(optional)</span>
+              </label>
+              <div class="input-group">
+                <input type="text" id="data-file" class="form-control" readonly
+                       placeholder="Optional measured data file…" />
+                <button class="btn btn-outline-secondary" type="button"
+                        onclick="openBrowser('datafile')">
+                  <i class="bi bi-folder2-open"></i> Browse
+                </button>
+                <button class="btn btn-outline-danger" type="button"
+                        onclick="document.getElementById('data-file').value=''">
+                  <i class="bi bi-x"></i>
+                </button>
+              </div>
+              <div class="form-text">
+                4-column text file (Q, R, dR, dQ). Overrides the Q-grid from the model.
+              </div>
+            </div>
+
+            {# Output directory #}
+            <div class="mb-3">
+              <label class="form-label fw-semibold">Output Directory</label>
+              <div class="input-group">
+                <input type="text" id="output-dir" class="form-control" readonly
+                       placeholder="Select an output folder…" required />
+                <button class="btn btn-outline-secondary" type="button"
+                        onclick="openBrowser('dir')">
+                  <i class="bi bi-folder2-open"></i> Browse
+                </button>
+              </div>
+              <div class="form-text">
+                Results will be saved here (JSON + plots).
+              </div>
+            </div>
+
+            {# Parallel toggle #}
+            <div class="mb-3 form-check form-switch">
+              <input class="form-check-input" type="checkbox" id="run-parallel" checked />
+              <label class="form-check-label fw-semibold" for="run-parallel">
+                Parallel Execution
+              </label>
+              <div class="form-text">
+                Run parameter evaluations in parallel across CPU cores.
+              </div>
+            </div>
+
+            {# Submit #}
+            <div class="d-grid">
+              <button id="btn-start" class="btn btn-primary btn-lg" type="button"
+                      onclick="startOptimize()">
+                <i class="bi bi-play-fill"></i> Start Optimization
+              </button>
+            </div>
+
+          </form>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+{# ── Progress Panel ──────────────────────────────────────────── #}
+<div id="progress-section" style="display:none">
+  <div class="row justify-content-center">
+    <div class="col-lg-10 col-xl-8">
+      <div class="card mt-3">
+        <div class="card-header d-flex align-items-center justify-content-between">
+          <h5 class="mb-0"><i class="bi bi-hourglass-split"></i> Optimization Running</h5>
+          <span id="progress-status" class="badge bg-primary">running</span>
+        </div>
+        <div class="card-body">
+          <p id="progress-text" class="lead text-center">Starting…</p>
+          <div class="progress mb-3" style="height:6px">
+            <div id="progress-bar" class="progress-bar progress-bar-striped progress-bar-animated"
+                 role="progressbar" style="width:10%"></div>
+          </div>
+        </div>
+        <div class="card-footer text-center" id="progress-footer" style="display:none">
+          <a id="btn-view-results" href="/" class="btn btn-success">
+            <i class="bi bi-check-circle"></i> View Results
+          </a>
+          <button class="btn btn-outline-secondary ms-2" onclick="resetSetup()">
+            <i class="bi bi-arrow-counterclockwise"></i> New Optimization
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+{% include "_browser_modal.html" %}
+
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('web.static', filename='setup.js') }}"></script>
+{% endblock %}
