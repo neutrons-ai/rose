@@ -157,4 +157,102 @@ def make_report(
         plt.close(fig)
         generated.append(path)
 
+    # --- Model discrimination plot ---
+    disc_data = result_dict.get("discrimination")
+    if disc_data and disc_data.get("per_value"):
+        disc_plots = _plot_discrimination(
+            param_values, disc_data, info_gains, std_gains, output_dir
+        )
+        generated.extend(disc_plots)
+
+    return generated
+
+
+def _plot_discrimination(
+    param_values: list[float],
+    disc_data: dict,
+    info_gains: list[float],
+    std_gains: list[float] | None,
+    output_dir: Path,
+) -> list[str]:
+    """Generate model discrimination plots.
+
+    Creates:
+      - ``model_discrimination.png`` — P(primary) per alternate model
+        vs. parameter value, with info gain on a twin axis.
+
+    Returns:
+        List of generated file paths.
+    """
+    generated: list[str] = []
+    per_value = disc_data["per_value"]
+    alt_names = disc_data["alternate_models"]
+    mode = disc_data.get("mode", "report")
+
+    # --- P(primary) + info gain twin-axis plot ---
+    fig, ax1 = plt.subplots(dpi=150, figsize=(7, 4.5))
+    fig.subplots_adjust(left=0.12, right=0.88, top=0.9, bottom=0.17)
+
+    # Plot P(primary | data) for each alternate on left axis
+    for aname in alt_names:
+        probs = [
+            pv.get("mean_model_prob", {}).get(aname, float("nan")) for pv in per_value
+        ]
+        ax1.plot(param_values, probs, marker="s", label=f"P(primary) vs {aname}")
+
+    ax1.set_xlabel("Parameter Value", fontsize=13)
+    ax1.set_ylabel("P(primary | data)", fontsize=13)
+    ax1.set_ylim(-0.05, 1.05)
+    ax1.axhline(0.5, color="gray", linestyle="--", alpha=0.5)
+    ax1.legend(loc="lower left", frameon=False, fontsize=9)
+    ax1.grid(True, alpha=0.3)
+
+    # Info gain on right twin axis
+    ax2 = ax1.twinx()
+    if std_gains:
+        ax2.errorbar(
+            param_values,
+            info_gains,
+            yerr=std_gains,
+            marker="o",
+            capsize=3,
+            color="tab:red",
+            alpha=0.6,
+            label="ΔH",
+        )
+    else:
+        ax2.plot(
+            param_values,
+            info_gains,
+            marker="o",
+            color="tab:red",
+            alpha=0.6,
+            label="ΔH",
+        )
+
+    # If penalize mode, also show effective info gain
+    if mode == "penalize":
+        eff_gains = [
+            pv.get("effective_info_gain", ig) for pv, ig in zip(per_value, info_gains)
+        ]
+        ax2.plot(
+            param_values,
+            eff_gains,
+            marker="^",
+            color="tab:green",
+            alpha=0.8,
+            linestyle="--",
+            label="Effective ΔH",
+        )
+
+    ax2.set_ylabel("Information Gain (bits)", fontsize=13, color="tab:red")
+    ax2.legend(loc="upper right", frameon=False, fontsize=9)
+
+    ax1.set_title("Model Discrimination", fontsize=13)
+
+    path = str(output_dir / "model_discrimination.png")
+    fig.savefig(path)
+    plt.close(fig)
+    generated.append(path)
+
     return generated

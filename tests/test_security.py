@@ -172,3 +172,73 @@ class TestModelLoaderGuards:
         # Should load safely without executing code
         desc = load_model_description(str(malicious))
         assert len(desc["layers"]) == 2
+
+
+# ── Alternate model resource caps ────────────────────────────────
+
+
+class TestAlternateModelCaps:
+    """Ensure alternate_models and modifications are capped."""
+
+    def test_too_many_alternate_models_raises(self, tmp_path):
+        import yaml
+
+        from rose.planner.model_loader import (
+            MAX_ALTERNATE_MODELS,
+            load_model_description,
+        )
+
+        many_alts = [
+            {
+                "name": f"alt_{i}",
+                "modifications": [{"action": "remove", "layer": "mid"}],
+            }
+            for i in range(MAX_ALTERNATE_MODELS + 1)
+        ]
+        bad = tmp_path / "model.yaml"
+        bad.write_text(
+            yaml.dump(
+                {
+                    "layers": [
+                        {"name": "air", "rho": 0},
+                        {"name": "mid", "rho": 3, "thickness": 20},
+                        {"name": "Si", "rho": 2.07},
+                    ],
+                    "optimization": {"alternate_models": many_alts},
+                }
+            )
+        )
+        with pytest.raises(ValueError, match="Too many alternate models"):
+            load_model_description(str(bad))
+
+    def test_too_many_modifications_raises(self, tmp_path):
+        import yaml
+
+        from rose.planner.model_loader import (
+            MAX_MODIFICATIONS_PER_ALTERNATE,
+            load_model_description,
+        )
+
+        many_mods = [
+            {"action": "modify", "layer": "mid", "set": {"rho": 3.0 + i * 0.01}}
+            for i in range(MAX_MODIFICATIONS_PER_ALTERNATE + 1)
+        ]
+        bad = tmp_path / "model.yaml"
+        bad.write_text(
+            yaml.dump(
+                {
+                    "layers": [
+                        {"name": "air", "rho": 0},
+                        {"name": "mid", "rho": 3, "thickness": 20},
+                        {"name": "Si", "rho": 2.07},
+                    ],
+                    "optimization": {
+                        "alternate_models": [
+                            {"name": "too_many_mods", "modifications": many_mods}
+                        ]
+                    },
+                }
+            )
+        )
+        with pytest.raises(ValueError, match="modifications has"):
+            load_model_description(str(bad))

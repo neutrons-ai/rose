@@ -15,9 +15,9 @@ layers:
     thickness: 0
     interface: 16
     fit:
-      interface: [15, 45]
+      interface: [15, 35]
 
-  - name: material
+  - name: CuOx
     rho: 5.0
     irho: 0.0
     thickness: 30
@@ -47,12 +47,33 @@ experiment:
   q_points: 60
   dq_over_q: 0.02
   relative_error: 0.05
-  data_file: ../data/REFL_218386_combined_data_auto.txt
+  data_file: examples/data/REFL_218386_combined_data_auto.txt
 
 optimization:
   param: THF rho
-  param_values: [1,2,3,4,5,6,7]
-  parameters_of_interest: [material rho, material thickness]
+  param_values: [0,1,2,3,4,5,6,7]
+  parameters_of_interest: [CuOx rho, CuOx thickness]
   num_realizations: 15
-  mcmc_steps: 3000
+  mcmc_steps: 300
   entropy_method: kdn
+
+  # Model discrimination: is the CuOx layer real, or just
+  # roughness on the Cu surface?
+  discrimination_method: bic  # "bic" or "evidence"
+  discrimination_mode: penalize # "report" or "penalize"
+
+  alternate_models:
+    - name: no_oxide
+      # Remove the CuOx layer entirely and allow Cu interface
+      # to absorb apparent oxide as roughness.
+      modifications:
+        - action: remove
+          layer: CuOx
+        - action: modify
+          layer: Cu
+          fit:
+            thickness: [500, 600]
+        - action: modify
+          layer: THF
+          fit:
+            interface: [15, 100]

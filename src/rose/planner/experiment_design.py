@@ -303,3 +303,54 @@ class ExperimentDesigner:
             cov += 1e-10 * np.eye(cov.shape[0])
             entropy_nats = multivariate_normal.entropy(cov=cov)
         return float(entropy_nats / np.log(2))
+
+
+# ------------------------------------------------------------------
+# Model discrimination helpers
+# ------------------------------------------------------------------
+
+
+def compute_bic(problem: FitProblem, state: object) -> float:
+    """Compute the Bayesian Information Criterion from MCMC results.
+
+    .. math::
+
+        BIC = -2 \\ln L_{\\text{best}} + k \\ln n
+
+    where *k* is the number of free parameters and *n* is the number
+    of data points.
+
+    Args:
+        problem: A bumps ``FitProblem``.
+        state: The DREAM sampler state (must have ``best()``).
+
+    Returns:
+        BIC value (lower = better fit given complexity).
+    """
+    _best_p, best_logp = state.best()
+    k = len(problem.parameters)
+    n = len(problem._models[0].probe.Q)
+    return float(-2.0 * best_logp + k * np.log(n))
+
+
+def compute_log_evidence(state: object, portion: float = 0.3) -> float:
+    """Estimate log-evidence via the harmonic mean of likelihoods.
+
+    Uses the Newton-Raftery harmonic mean estimator.
+    Implemented via log-sum-exp for numerical stability.
+    Known to have high variance but works on existing DREAM chains
+    without additional MCMC runs.
+
+    Args:
+        state: The DREAM sampler state.
+        portion: Fraction of the chain to use (default 0.3).
+
+    Returns:
+        Estimated log-evidence in nats.
+    """
+    _points, logp = state.sample(portion=portion)
+    neg_logp = -logp
+    max_neg_logp = np.max(neg_logp)
+    log_sum = max_neg_logp + np.log(np.sum(np.exp(neg_logp - max_neg_logp)))
+    log_evidence = -(log_sum - np.log(len(logp)))
+    return float(log_evidence)

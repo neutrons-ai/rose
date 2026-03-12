@@ -130,6 +130,13 @@ def inspect(model_file: str, verbose: bool) -> None:
     help="Max parallel worker processes (default: min(values, CPUs, 8))",
 )
 @click.option("--verbose", is_flag=True, help="Enable debug logging")
+@click.option(
+    "--save-problems",
+    is_flag=True,
+    default=False,
+    help="Export the first realization of each step as a refl1d problem file "
+    "with embedded synthetic data (primary + alternates).",
+)
 def optimize(
     model_file: str,
     data_file: str | None,
@@ -137,6 +144,7 @@ def optimize(
     parallel: bool,
     workers: int | None,
     verbose: bool,
+    save_problems: bool,
 ) -> None:
     """Optimise experiment design by maximising information gain.
 
@@ -153,9 +161,11 @@ def optimize(
     from rose.planner import instrument as inst
     from rose.planner import optimizer
     from rose.planner.experiment_design import ExperimentDesigner
+    from rose.planner.model_discriminator import ModelDiscriminator
     from rose.planner.model_loader import (
         EXPERIMENT_DEFAULTS,
         OPTIMIZATION_DEFAULTS,
+        build_alternate_experiments,
         load_experiment,
         load_model_description,
     )
@@ -189,6 +199,14 @@ def optimize(
     num_realizations = int(opt_cfg["num_realizations"])
     mcmc_steps = int(opt_cfg["mcmc_steps"])
     entropy_method = str(opt_cfg["entropy_method"])
+
+    # Discrimination settings
+    disc_method = str(opt_cfg.get("discrimination_method", "bic"))
+    disc_mode = str(opt_cfg.get("discrimination_mode", "report"))
+    alt_mcmc_steps_cfg = opt_cfg.get("alt_mcmc_steps")
+    alt_mcmc_steps: int | None = (
+        int(alt_mcmc_steps_cfg) if alt_mcmc_steps_cfg is not None else None
+    )
 
     click.echo("Starting experiment design optimisation...")
     click.echo(f"  Model:       {model_file}")
@@ -233,6 +251,25 @@ def optimize(
 
     click.echo("\nRunning optimisation...\n")
 
+    # Build alternate models and discriminator (if configured)
+    discriminator = None
+    alt_names: list[str] = []
+    alt_models_cfg = opt_cfg.get("alternate_models", [])
+    if alt_models_cfg:
+        alt_experiments = build_alternate_experiments(
+            desc, simulator.q_values, simulator.dq_values
+        )
+        alt_names = [name for name, _ in alt_experiments]
+        discriminator = ModelDiscriminator(
+            alternate_experiments=alt_experiments,
+            method=disc_method,
+        )
+        click.echo(f"  Alternates:  {alt_names}")
+        click.echo(f"  Disc method: {disc_method}")
+        click.echo(f"  Disc mode:   {disc_mode}")
+        if alt_mcmc_steps is not None:
+            click.echo(f"  Alt MCMC:    {alt_mcmc_steps}")
+
     if parallel:
         results, simulated_data = optimizer.optimize_parallel(
             designer,
@@ -242,6 +279,9 @@ def optimize(
             mcmc_steps=mcmc_steps,
             entropy_method=entropy_method,
             max_workers=workers,
+            discriminator=discriminator,
+            alt_mcmc_steps=alt_mcmc_steps,
+            save_problem=save_problems,
         )
     else:
         results, simulated_data = optimizer.optimize(
@@ -251,28 +291,106 @@ def optimize(
             realizations=num_realizations,
             mcmc_steps=mcmc_steps,
             entropy_method=entropy_method,
+            discriminator=discriminator,
+            alt_mcmc_steps=alt_mcmc_steps,
+            save_problem=save_problems,
         )
+
+    # Compute per-value discrimination summary
+    from rose.planner.model_discriminator import combine_scores
+
+    discrimination_summary: list[dict] = []
+    if discriminator is not None:
+        for vi, val_data in enumerate(simulated_data):
+            # Collect model probs across realizations for this value
+            per_alt_probs: dict[str, list[float]] = {n: [] for n in alt_names}
+            per_alt_deltas: dict[str, list[float]] = {n: [] for n in alt_names}
+            for rd in val_data:
+                disc = rd.get("discrimination", {})
+                for aname in alt_names:
+                    if aname in disc:
+                        per_alt_probs[aname].append(disc[aname]["model_prob"])
+                        per_alt_deltas[aname].append(disc[aname]["delta_metric"])
+
+            mean_probs = {
+                n: float(np.nanmean(per_alt_probs[n]))
+                if per_alt_probs[n]
+                else float("nan")
+                for n in alt_names
+            }
+            mean_deltas = {
+                n: float(np.nanmean(per_alt_deltas[n]))
+                if per_alt_deltas[n]
+                else float("nan")
+                for n in alt_names
+            }
+            all_probs = [p for probs in per_alt_probs.values() for p in probs]
+            info_gain = results[vi][1]
+            combined = combine_scores(info_gain, all_probs, mode=disc_mode)
+            discrimination_summary.append(
+                {
+                    **combined,
+                    "mean_model_prob": mean_probs,
+                    "mean_delta_metric": mean_deltas,
+                }
+            )
 
     # Display results
     click.echo(f"\n{'=' * 55}")
     click.echo("OPTIMISATION RESULTS")
     click.echo(f"{'=' * 55}")
-    click.echo(f"{'Value':>10}   {'ΔH (bits)':>12}   {'± std':>10}")
-    click.echo("-" * 55)
-    for r in results:
-        click.echo(f"{r[0]:>10.3f}   {r[1]:>12.4f}   {r[2]:>10.4f}")
+    if discrimination_summary:
+        click.echo(
+            f"{'Value':>10}   {'ΔH (bits)':>12}   {'± std':>10}   {'P(primary)':>12}"
+        )
+        click.echo("-" * 65)
+        for i, r in enumerate(results):
+            probs = discrimination_summary[i]["mean_model_prob"]
+            avg_prob = (
+                float(np.nanmean(list(probs.values()))) if probs else float("nan")
+            )
+            click.echo(
+                f"{r[0]:>10.3f}   {r[1]:>12.4f}   {r[2]:>10.4f}   {avg_prob:>12.3f}"
+            )
+    else:
+        click.echo(f"{'Value':>10}   {'ΔH (bits)':>12}   {'± std':>10}")
+        click.echo("-" * 55)
+        for r in results:
+            click.echo(f"{r[0]:>10.3f}   {r[1]:>12.4f}   {r[2]:>10.4f}")
 
-    best_idx = int(np.argmax([r[1] for r in results]))
-    best_val, best_gain, best_std = results[best_idx]
-    click.echo(f"\nOptimal value: {best_val:.3f}")
-    click.echo(f"Max ΔH:        {best_gain:.4f} ± {best_std:.4f} bits")
+    # Determine best value (use effective_info_gain if in penalize mode)
+    if discrimination_summary and disc_mode == "penalize":
+        eff_gains = [
+            d.get("effective_info_gain", results[i][1])
+            for i, d in enumerate(discrimination_summary)
+        ]
+        best_idx = int(np.argmax(eff_gains))
+        best_val, best_gain, best_std = results[best_idx]
+        click.echo(f"\nOptimal value (penalized): {best_val:.3f}")
+        click.echo(f"Effective ΔH:  {eff_gains[best_idx]:.4f} bits")
+        click.echo(f"Raw ΔH:        {best_gain:.4f} ± {best_std:.4f} bits")
+    else:
+        best_idx = int(np.argmax([r[1] for r in results]))
+        best_val, best_gain, best_std = results[best_idx]
+        click.echo(f"\nOptimal value: {best_val:.3f}")
+        click.echo(f"Max ΔH:        {best_gain:.4f} ± {best_std:.4f} bits")
+
+    # Strip serialised FitProblem blobs from simulated_data before
+    # writing the main results JSON (problems are saved separately).
+    clean_simulated_data = [
+        [
+            {k: v for k, v in rd.items() if k not in ("problem", "alt_problems")}
+            for rd in val_data
+        ]
+        for val_data in simulated_data
+    ]
 
     # Save JSON
     result_dict = {
         "parameter": param,
         "parameter_values": param_vals,
         "results": results,
-        "simulated_data": simulated_data,
+        "simulated_data": clean_simulated_data,
         "optimal_value": best_val,
         "max_information_gain": best_gain,
         "max_information_gain_std": best_std,
@@ -284,6 +402,13 @@ def optimize(
             "parallel": parallel,
         },
     }
+    if discrimination_summary:
+        result_dict["discrimination"] = {
+            "alternate_models": alt_names,
+            "method": disc_method,
+            "mode": disc_mode,
+            "per_value": discrimination_summary,
+        }
     json_path = os.path.join(output_dir, "optimization_results.json")
     with open(json_path, "w") as f:
         json.dump(result_dict, f, indent=2)
@@ -295,6 +420,38 @@ def optimize(
 
     # ASCII graph
     _print_ascii_graph(results)
+
+    # Export serialised FitProblem JSON files (first realization per step)
+    if save_problems:
+        problems_dir = os.path.join(output_dir, "problems")
+        os.makedirs(problems_dir, exist_ok=True)
+
+        for vi, val_data in enumerate(simulated_data):
+            if not val_data:
+                continue
+            rd = val_data[0]  # first realization
+            pval = param_vals[vi]
+
+            # Primary problem
+            primary_blob = rd.get("problem")
+            if primary_blob is not None:
+                ppath = os.path.join(
+                    problems_dir,
+                    f"step_{vi}_value_{pval}_primary.json",
+                )
+                with open(ppath, "w") as f:
+                    json.dump(primary_blob, f, indent=2)
+
+            # Alternate model problems
+            for alt_name, alt_blob in rd.get("alt_problems", {}).items():
+                apath = os.path.join(
+                    problems_dir,
+                    f"step_{vi}_value_{pval}_{alt_name}.json",
+                )
+                with open(apath, "w") as f:
+                    json.dump(alt_blob, f, indent=2)
+
+        click.echo(f"Problem files saved to: {problems_dir}/")
 
     return result_dict  # for programmatic use
 

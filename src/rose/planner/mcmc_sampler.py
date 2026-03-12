@@ -39,7 +39,9 @@ def perform_mcmc(
             available CPUs, ``1`` disables parallelism.
 
     Returns:
-        A bumps fit result whose ``.state`` contains the DREAM chain.
+        A ``(result, problem)`` tuple where *result* is a bumps fit
+        result whose ``.state`` contains the DREAM chain and *problem*
+        is the ``FitProblem`` used for fitting.
     """
     probe = QProbe(q_values, dq_values, R=noisy_reflectivity, dR=errors)
     expt = Experiment(sample=sample, probe=probe)
@@ -58,4 +60,4 @@ def perform_mcmc(
     result.state.keep_best()
     result.state.mark_outliers()
 
-    return result
+    return result, problem

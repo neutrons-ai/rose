@@ -50,6 +50,7 @@ YAML schema example::
 
 from __future__ import annotations
 
+import copy
 import json
 import logging
 from pathlib import Path
@@ -80,6 +81,10 @@ OPTIMIZATION_DEFAULTS: dict[str, object] = {
     "num_realizations": 3,
     "mcmc_steps": 2000,
     "entropy_method": "kdn",
+    "alternate_models": [],
+    "discrimination_method": "bic",
+    "discrimination_mode": "report",
+    "alt_mcmc_steps": None,
 }
 
 
@@ -135,6 +140,10 @@ def load_model_description(model_file: str | Path) -> dict[str, Any]:
         _validate_experiment(desc["experiment"])
     if "optimization" in desc:
         _validate_optimization(desc["optimization"])
+        alt_models = desc["optimization"].get("alternate_models", [])
+        if alt_models:
+            layer_names = [l["name"] for l in desc["layers"]]
+            _validate_alternate_models(alt_models, layer_names)
     return desc
 
 
@@ -372,6 +381,10 @@ def _validate_optimization(optimization: object) -> None:
         "num_realizations",
         "mcmc_steps",
         "entropy_method",
+        "alternate_models",
+        "discrimination_method",
+        "discrimination_mode",
+        "alt_mcmc_steps",
     }
     unknown = set(optimization) - allowed
     if unknown:
@@ -402,3 +415,255 @@ def _validate_optimization(optimization: object) -> None:
         "kdn",
     ):
         raise ValueError("optimization.entropy_method must be 'mvn' or 'kdn'")
+    if "discrimination_method" in optimization:
+        dm = optimization["discrimination_method"]
+        if dm not in ("bic", "evidence"):
+            raise ValueError(
+                "optimization.discrimination_method must be 'bic' or 'evidence'"
+            )
+    if "discrimination_mode" in optimization:
+        mode = optimization["discrimination_mode"]
+        if mode not in ("report", "penalize"):
+            raise ValueError(
+                "optimization.discrimination_mode must be 'report' or 'penalize'"
+            )
+    if "alt_mcmc_steps" in optimization:
+        ams = optimization["alt_mcmc_steps"]
+        if ams is not None and (not isinstance(ams, int) or ams < 100 or ams > 100_000):
+            raise ValueError(
+                "optimization.alt_mcmc_steps must be an integer in 100–100,000 or null"
+            )
+    # Alternate models validated separately in load_model_description
+    # because validation requires the layer names from the primary model.
+    if "alternate_models" in optimization and not isinstance(
+        optimization["alternate_models"], list
+    ):
+        raise ValueError("optimization.alternate_models must be a list")
+
+
+#: Valid layer properties that can be set via ``set`` in modifications.
+_VALID_LAYER_SET_KEYS = {"rho", "irho", "thickness", "interface"}
+
+#: Valid modification actions.
+_VALID_ACTIONS = {"remove", "modify", "add"}
+
+#: Maximum number of alternate models per YAML file.
+MAX_ALTERNATE_MODELS = 10
+
+#: Maximum number of modifications per alternate model.
+MAX_MODIFICATIONS_PER_ALTERNATE = 20
+
+
+def _validate_alternate_models(
+    alternate_models: list,
+    layer_names: list[str],
+) -> None:
+    """Validate the ``alternate_models`` list in the optimization section.
+
+    Args:
+        alternate_models: List of alternate model dicts from YAML.
+        layer_names: Names of layers in the primary model.
+
+    Raises:
+        ValueError: On invalid alternate model specification.
+    """
+    if not isinstance(alternate_models, list):
+        raise ValueError("alternate_models must be a list")
+    if len(alternate_models) > MAX_ALTERNATE_MODELS:
+        raise ValueError(
+            f"Too many alternate models ({len(alternate_models)}); "
+            f"max is {MAX_ALTERNATE_MODELS}"
+        )
+
+    for i, alt in enumerate(alternate_models):
+        prefix = f"alternate_models[{i}]"
+        if not isinstance(alt, dict):
+            raise ValueError(f"{prefix} must be a dict")
+        if "name" not in alt:
+            raise ValueError(f"{prefix} is missing required 'name' field")
+        if not isinstance(alt["name"], str):
+            raise ValueError(f"{prefix}.name must be a string")
+        if "modifications" not in alt:
+            raise ValueError(f"{prefix} is missing required 'modifications' list")
+        if not isinstance(alt["modifications"], list) or not alt["modifications"]:
+            raise ValueError(f"{prefix}.modifications must be a non-empty list")
+        if len(alt["modifications"]) > MAX_MODIFICATIONS_PER_ALTERNATE:
+            raise ValueError(
+                f"{prefix}.modifications has {len(alt['modifications'])} entries; "
+                f"max is {MAX_MODIFICATIONS_PER_ALTERNATE}"
+            )
+
+        for j, mod in enumerate(alt["modifications"]):
+            mod_prefix = f"{prefix}.modifications[{j}]"
+            if not isinstance(mod, dict):
+                raise ValueError(f"{mod_prefix} must be a dict")
+            if "action" not in mod:
+                raise ValueError(f"{mod_prefix} is missing required 'action' field")
+            action = mod["action"]
+            if action not in _VALID_ACTIONS:
+                raise ValueError(
+                    f"{mod_prefix}.action must be one of {sorted(_VALID_ACTIONS)}, "
+                    f"got '{action}'"
+                )
+
+            if action == "remove":
+                if "layer" not in mod:
+                    raise ValueError(
+                        f"{mod_prefix}: 'remove' action requires 'layer' field"
+                    )
+                if mod["layer"] not in layer_names:
+                    raise ValueError(
+                        f"{mod_prefix}: layer '{mod['layer']}' not found in model. "
+                        f"Available: {layer_names}"
+                    )
+
+            elif action == "modify":
+                if "layer" not in mod:
+                    raise ValueError(
+                        f"{mod_prefix}: 'modify' action requires 'layer' field"
+                    )
+                if mod["layer"] not in layer_names:
+                    raise ValueError(
+                        f"{mod_prefix}: layer '{mod['layer']}' not found in model. "
+                        f"Available: {layer_names}"
+                    )
+                if "set" in mod:
+                    if not isinstance(mod["set"], dict):
+                        raise ValueError(f"{mod_prefix}.set must be a dict")
+                    unknown = set(mod["set"]) - _VALID_LAYER_SET_KEYS
+                    if unknown:
+                        raise ValueError(
+                            f"{mod_prefix}.set has unknown keys: {sorted(unknown)}. "
+                            f"Valid: {sorted(_VALID_LAYER_SET_KEYS)}"
+                        )
+                if "fit" in mod:
+                    if not isinstance(mod["fit"], dict):
+                        raise ValueError(f"{mod_prefix}.fit must be a dict")
+                    for key, bounds in mod["fit"].items():
+                        if key not in _VALID_LAYER_SET_KEYS:
+                            raise ValueError(
+                                f"{mod_prefix}.fit has unknown key '{key}'. "
+                                f"Valid: {sorted(_VALID_LAYER_SET_KEYS)}"
+                            )
+                        if (
+                            not isinstance(bounds, list)
+                            or len(bounds) != 2
+                            or bounds[0] >= bounds[1]
+                        ):
+                            raise ValueError(
+                                f"{mod_prefix}.fit.{key} must be a [min, max] "
+                                f"list with min < max, got {bounds}"
+                            )
+
+            elif action == "add":
+                if "after" not in mod and "before" not in mod:
+                    raise ValueError(
+                        f"{mod_prefix}: 'add' action requires 'after' or 'before'"
+                    )
+                pos_key = "after" if "after" in mod else "before"
+                if mod[pos_key] not in layer_names:
+                    raise ValueError(
+                        f"{mod_prefix}: {pos_key} layer '{mod[pos_key]}' "
+                        f"not found in model. Available: {layer_names}"
+                    )
+                if "layer" not in mod or not isinstance(mod["layer"], dict):
+                    raise ValueError(
+                        f"{mod_prefix}: 'add' action requires a 'layer' dict "
+                        f"with at least 'name' and 'rho'"
+                    )
+                if "name" not in mod["layer"]:
+                    raise ValueError(
+                        f"{mod_prefix}.layer is missing required 'name' field"
+                    )
+
+
+def build_alternate_experiments(
+    desc: dict[str, Any],
+    q: np.ndarray,
+    dq: np.ndarray,
+    reflectivity: np.ndarray | None = None,
+    errors: np.ndarray | None = None,
+) -> list[tuple[str, Experiment]]:
+    """Build refl1d Experiments for each alternate model.
+
+    Applies inline modifications (remove, modify, add) to a deep copy
+    of the primary model description and builds an experiment from each.
+
+    Args:
+        desc: Primary model description dict (from ``load_model_description``).
+        q: Momentum transfer values.
+        dq: Q resolution values.
+        reflectivity: Optional measured reflectivity data.
+        errors: Optional reflectivity error bars.
+
+    Returns:
+        List of ``(name, Experiment)`` tuples.
+    """
+    alt_descs = build_alternate_descriptions(desc)
+    results: list[tuple[str, Experiment]] = []
+    for name, alt_desc in alt_descs:
+        experiment = build_experiment(alt_desc, q, dq, reflectivity, errors)
+        results.append((name, experiment))
+    return results
+
+
+def build_alternate_descriptions(
+    desc: dict[str, Any],
+) -> list[tuple[str, dict[str, Any]]]:
+    """Build modified model descriptions for each alternate model.
+
+    Applies inline modifications (remove, modify, add) to a deep copy
+    of the primary model description.
+
+    Args:
+        desc: Primary model description dict (from ``load_model_description``).
+
+    Returns:
+        List of ``(name, alt_desc)`` tuples.
+    """
+    opt = desc.get("optimization", {})
+    alt_models = opt.get("alternate_models", [])
+    if not alt_models:
+        return []
+
+    results: list[tuple[str, dict[str, Any]]] = []
+    for alt in alt_models:
+        name = alt["name"]
+        alt_desc = copy.deepcopy(desc)
+        alt_desc.pop("optimization", None)
+
+        layers = alt_desc["layers"]
+        for mod in alt["modifications"]:
+            action = mod["action"]
+
+            if action == "remove":
+                layers[:] = [l for l in layers if l["name"] != mod["layer"]]
+
+            elif action == "modify":
+                for layer in layers:
+                    if layer["name"] != mod["layer"]:
+                        continue
+                    for key, val in mod.get("set", {}).items():
+                        layer[key] = val
+                    if "fit" in mod:
+                        if "fit" not in layer:
+                            layer["fit"] = {}
+                        layer["fit"].update(mod["fit"])
+                    break
+
+            elif action == "add":
+                new_layer = copy.deepcopy(mod["layer"])
+                if "after" in mod:
+                    idx = next(
+                        i for i, l in enumerate(layers) if l["name"] == mod["after"]
+                    )
+                    layers.insert(idx + 1, new_layer)
+                elif "before" in mod:
+                    idx = next(
+                        i for i, l in enumerate(layers) if l["name"] == mod["before"]
+                    )
+                    layers.insert(idx, new_layer)
+
+        results.append((name, alt_desc))
+
+    return results

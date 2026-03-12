@@ -290,3 +290,168 @@ src/rose/web/
 ### Deferred
 - **MCP tool integration** (plan.md step 39): Deferred — requires FastMCP and is a separate integration concern. Can be added later when AuRE's MCP server is ready to consume ROSE tools.
 - **Advanced form features**: Interactive parameter selection with checkboxes, sliders for value ranges, YAML syntax highlighting editor — deferred to future iterations. Current forms cover the essential workflow.
+
+## Model Discrimination
+
+### Motivation
+Information gain alone can be misleading: a measurement condition may yield high ΔH for the primary model but fail to distinguish it from simpler alternatives. Example: in `cu_thf.yaml`, low THF SLD shows high information gain for CuOx parameters, but the data equally well explained by simple Cu roughness (no oxide layer). High THF SLD both informs CuOx parameters AND discriminates against the "no oxide" hypothesis.
+
+### Approach
+Inline alternate models defined in the YAML `optimization` section. Each alternate is a set of modifications (remove, modify, add) applied to the primary layer stack. For each realization, both the primary and all alternates are fit to the same noisy synthetic data, then a discrimination metric quantifies which model the data prefers.
+
+### YAML Schema Extension
+```yaml
+optimization:
+  alternate_models:
+    - name: no_oxide
+      modifications:
+        - action: remove     # remove a layer
+          layer: CuOx
+        - action: modify     # change/fit a layer
+          layer: Cu
+          set: {interface: 15}
+          fit: {interface: [3, 40]}
+        - action: add        # add a new layer
+          layer: {name: new, rho: 3.5, thickness: 10}
+          after: Cu           # or before: Cu
+  discrimination_method: bic     # "bic" or "evidence"
+  discrimination_mode: report    # "report" or "penalize"
+  alt_mcmc_steps: null           # defaults to mcmc_steps
+```
+
+### Discrimination Metrics
+- **BIC**: `BIC = -2·logp_best + k·ln(n)`. `ΔBIC = BIC_alt - BIC_primary` (positive favours primary). `P(primary|data) = 1/(1+exp(-ΔBIC/2))`.
+- **Evidence** (harmonic mean): Newton-Raftery estimator on DREAM chains. `log Z ≈ -(logsumexp(-logp) - log(N))`. Log Bayes factor = `log Z_primary - log Z_alt`. `P(primary|data) = 1/(1+exp(-log_bf))`. High variance but requires no additional MCMC runs.
+- **bumps limitation**: bumps DREAM has no built-in log-evidence or thermodynamic integration. Harmonic mean estimator uses `state.sample(portion=0.3)` which returns `(points, logp)`.
+
+### Combined Scoring
+- **report mode**: Both info gain and P(primary) reported side-by-side. No modification to optimization recommendation.
+- **penalize mode**: `effective_info_gain = info_gain × mean(P(primary|data))`. Conditions where the primary can't be distinguished from alternates get penalized. Optimal parameter selected by max effective_info_gain.
+
+### Module Structure
+```
+src/rose/planner/
+  model_discriminator.py  — ModelDiscriminator class, model_probability(), combine_scores()
+  experiment_design.py    — compute_bic(), compute_log_evidence() (appended)
+  model_loader.py         — _validate_alternate_models(), build_alternate_experiments()
+  optimizer.py            — discriminator threaded through evaluate_param/optimize/optimize_parallel
+```
+
+### Data Flow
+1. CLI loads YAML → `_validate_alternate_models()` checks schema + layer references
+2. `build_alternate_experiments()` deep-copies primary desc, applies modifications, builds refl1d Experiments
+3. `ModelDiscriminator(alt_experiments, method)` created from list of `(name, Experiment)` tuples
+4. Passed through `optimize()`/`optimize_parallel()` → `evaluate_param()` / `_evaluate_single_realization()`
+5. Per realization: alternates are fit to same noisy data via `perform_mcmc()`, metrics computed
+6. CLI aggregates per-value discrimination → `combine_scores()` → JSON output
+7. `report.py` generates `model_discrimination.png` (twin-axis: P(primary) + ΔH)
+
+### Output
+- JSON: `"discrimination"` key with `alternate_models`, `method`, `mode`, and `per_value` array (each with `mean_model_prob`, `mean_delta_metric`, `info_gain`, `mean_model_prob` scalar, optionally `effective_info_gain`)
+- Plot: `model_discrimination.png` — P(primary|data) per alternate on left axis, ΔH on right axis. Penalize mode also shows effective ΔH.
+
+### Test Coverage
+- 30 new tests (168 total): `test_model_discriminator.py` (model_probability, combine_scores, ModelDiscriminator construction), `test_model_loader.py` (alternate model validation: valid/invalid actions, missing name, unknown layer, bad discrimination_method/mode; build_alternate_experiments: remove, modify, deep-copy safety, multiple alternates)
+
+## FitProblem Serialization (bumps/refl1d)
+
+### Key Finding: bumps provides full JSON serialization of FitProblem objects
+
+There are **three distinct mechanisms** for saving/loading FitProblem state:
+
+### 1. Full JSON Serialization via `bumps.serialize` (PREFERRED for programmatic use)
+
+**Save:**
+```python
+from bumps.serialize import serialize, save_file
+import json
+
+# Option A: serialize to dict, then dump
+serialized = serialize(problem)  # returns dict with $schema, object, references keys
+with open("problem.json", "w") as f:
+    json.dump(serialized, f)
+
+# Option B: convenience function (wraps Option A)
+save_file("problem.json", problem)
+```
+
+**Load:**
+```python
+from bumps.serialize import deserialize, load_file
+
+# Option A: load from dict
+import json
+with open("problem.json", "r") as f:
+    serialized = json.loads(f.read())
+problem = deserialize(serialized, migration=True)
+
+# Option B: convenience function
+problem = load_file("problem.json")
+```
+
+**Format:** JSON with schema versioning (`bumps-draft-03`). Uses `__class__` keys for type info,
+`$ref` references for shared objects (parameters), base64-encoded numpy arrays, and
+cloudpickle-serialized callables. Supports schema migrations across versions.
+
+**Location:** `bumps.serialize` module (functions: `serialize`, `deserialize`, `save_file`, `load_file`)
+
+### 2. Higher-level serialize/deserialize (webview server API)
+
+```python
+from bumps.webview.server.state_hdf5_backed import serialize_problem, deserialize_problem
+
+# Supports methods: "dataclass" (JSON), "pickle", "cloudpickle", "dill"
+serialized_str = serialize_problem(problem, method="dataclass")  # returns JSON string
+problem = deserialize_problem(serialized_str, method="dataclass")
+
+# Also: serialize_problem_bytes / deserialize_problem_bytes for bytes output
+```
+
+Default serializer is `"dataclass"` (JSON). Fallback options: `"pickle"`, `"dill"`, `"cloudpickle"`.
+
+### 3. Parameter-only `.par` file (used by CLI fitting)
+
+**Save (in `bumps.cli.save_best`):**
+```python
+# Writes label-value pairs to .par file
+pardata = "".join("%s %.15g\n" % (name, value)
+                  for name, value in zip(problem.labels(), problem.getp()))
+open(output_path + ".par", "wt").write(pardata)
+```
+
+**Load (in `bumps.cli.load_best`):**
+```python
+from bumps.cli import load_best
+load_best(problem, "path/to/results.par")  # updates parameter values in existing problem
+```
+
+**Format:** Plain text, one "label value" per line. Only saves parameter values, NOT the full model structure. Requires an existing FitProblem to load into.
+
+### 4. Python script loading (`bumps.fitproblem.load_problem`)
+
+```python
+from bumps.fitproblem import load_problem
+problem = load_problem("model_script.py", options=[])
+```
+
+Executes a Python script that must define `problem = FitProblem(...)`. This is how `.py` model files are loaded (the pattern used in `results/problems/`).
+
+### Gotchas & Limitations
+
+- **JSON serialization requires dataclass-based models**: Objects need `__schema__` attribute and dataclass decorators for clean serialization. refl1d models are dataclasses and support this.
+- **Callable constraints**: If `constraints` is a function (not constraint expressions), it gets cloudpickle-serialized as base64 — works but fragile across Python versions.
+- **`save()` on FitProblem**: The `save(basename)` method delegates to each model's `save()`. For refl1d, this saves profiles (.dat), reflectivity (.dat), and experiment JSON (.json) — NOT the full FitProblem structure. It's for result output, not for serialization.
+- **refl1d Experiment.save_json()**: Saves just the experiment (fitness) as JSON via `bumps.serialize.serialize(self)`, NOT the full FitProblem wrapper.
+- **Schema migrations**: `bumps.serialize` supports versioned schemas with automatic migration. Current version is `bumps-draft-03`.
+- **load_problem() uses exec()**: The `.py` file loader uses `exec()` — only use with trusted files.
+
+### ROSE Integration
+
+ROSE uses `bumps.serialize.serialize()` to capture the exact `FitProblem` used during MCMC.
+When `--save-problems` is passed to `rose optimize`:
+
+1. `perform_mcmc()` returns `(result, problem)` — the problem is the actual `FitProblem` with noisy data.
+2. The optimizer serializes the problem via `bumps.serialize.serialize()` into `rdata["problem"]` (first realization only).
+3. Alternate model problems are serialized into `rdata["alt_problems"]` via `ModelDiscriminator.evaluate()`.
+4. The CLI writes these as JSON files to `{output_dir}/problems/step_{i}_value_{v}_{label}.json`.
+5. Files can be reloaded via `bumps.serialize.load_file(path)` for inspection or further fitting.

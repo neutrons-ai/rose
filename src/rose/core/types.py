@@ -43,6 +43,8 @@ class RealizationData:
         sld_best: Best-fit SLD profile.
         sld_low: Lower 90% confidence bound on SLD.
         sld_high: Upper 90% confidence bound on SLD.
+        discrimination: Per-alternate discrimination metrics.
+            Maps alternate model name to delta_metric value.
     """
 
     q_values: list[float] = field(default_factory=list)
@@ -53,6 +55,7 @@ class RealizationData:
     sld_best: list[float] = field(default_factory=list)
     sld_low: list[float] = field(default_factory=list)
     sld_high: list[float] = field(default_factory=list)
+    discrimination: dict[str, float] = field(default_factory=dict)
 
 
 @dataclass
@@ -64,12 +67,16 @@ class ParameterResult:
         info_gain: Average information gain (bits) over realizations.
         info_gain_std: Standard deviation of information gain.
         realizations: Per-realization data.
+        mean_discrimination: Mean ΔBIC (or log BF) per alternate model.
+        model_probability: Mean P(primary | data) per alternate model.
     """
 
     param_value: float
     info_gain: float
     info_gain_std: float
     realizations: list[RealizationData] = field(default_factory=list)
+    mean_discrimination: dict[str, float] = field(default_factory=dict)
+    model_probability: dict[str, float] = field(default_factory=dict)
 
 
 @dataclass
@@ -84,6 +91,9 @@ class OptimizationResult:
         max_information_gain: Highest information gain found.
         prior_entropy: Entropy of the prior distribution (bits).
         settings: Dictionary of run settings (steps, method, etc.).
+        alternate_models: Names of alternate models tested.
+        discrimination_method: Discrimination method used.
+        discrimination_mode: Scoring mode used.
     """
 
     parameter: str
@@ -93,3 +103,6 @@ class OptimizationResult:
     max_information_gain: float
     prior_entropy: float
     settings: dict[str, object] = field(default_factory=dict)
+    alternate_models: list[str] = field(default_factory=list)
+    discrimination_method: str = ""
+    discrimination_mode: str = ""

@@ -13,6 +13,8 @@ import pytest
 import yaml
 
 from rose.planner.model_loader import (
+    build_alternate_descriptions,
+    build_alternate_experiments,
     build_experiment,
     inspect_model,
     load_experiment,
@@ -263,3 +265,284 @@ class TestOptimizationValidation:
         )
         with pytest.raises(ValueError, match="param_values"):
             load_model_description(str(bad))
+
+
+# ── alternate models validation ──────────────────────────────────
+
+
+class TestAlternateModelsValidation:
+    """Test validation of alternate_models in the optimization section."""
+
+    def _base_desc(self):
+        return {
+            "layers": [
+                {"name": "air", "rho": 0},
+                {"name": "oxide", "rho": 5.0, "thickness": 20, "interface": 3},
+                {"name": "Cu", "rho": 6.3},
+            ],
+        }
+
+    def test_valid_remove_action(self, tmp_path):
+        desc = self._base_desc()
+        desc["optimization"] = {
+            "alternate_models": [
+                {
+                    "name": "no_oxide",
+                    "modifications": [{"action": "remove", "layer": "oxide"}],
+                }
+            ]
+        }
+        f = tmp_path / "model.yaml"
+        f.write_text(yaml.dump(desc))
+        loaded = load_model_description(str(f))
+        alts = loaded["optimization"]["alternate_models"]
+        assert len(alts) == 1
+
+    def test_valid_modify_action(self, tmp_path):
+        desc = self._base_desc()
+        desc["optimization"] = {
+            "alternate_models": [
+                {
+                    "name": "thick_oxide",
+                    "modifications": [
+                        {
+                            "action": "modify",
+                            "layer": "oxide",
+                            "set": {"thickness": 50},
+                        }
+                    ],
+                }
+            ]
+        }
+        f = tmp_path / "model.yaml"
+        f.write_text(yaml.dump(desc))
+        loaded = load_model_description(str(f))
+        assert loaded["optimization"]["alternate_models"][0]["name"] == "thick_oxide"
+
+    def test_invalid_action_raises(self, tmp_path):
+        desc = self._base_desc()
+        desc["optimization"] = {
+            "alternate_models": [
+                {
+                    "name": "bad",
+                    "modifications": [{"action": "explode", "layer": "oxide"}],
+                }
+            ]
+        }
+        f = tmp_path / "model.yaml"
+        f.write_text(yaml.dump(desc))
+        with pytest.raises(ValueError, match="action"):
+            load_model_description(str(f))
+
+    def test_missing_name_raises(self, tmp_path):
+        desc = self._base_desc()
+        desc["optimization"] = {
+            "alternate_models": [
+                {"modifications": [{"action": "remove", "layer": "oxide"}]}
+            ]
+        }
+        f = tmp_path / "model.yaml"
+        f.write_text(yaml.dump(desc))
+        with pytest.raises(ValueError, match="name"):
+            load_model_description(str(f))
+
+    def test_unknown_layer_raises(self, tmp_path):
+        desc = self._base_desc()
+        desc["optimization"] = {
+            "alternate_models": [
+                {
+                    "name": "bad_ref",
+                    "modifications": [
+                        {"action": "remove", "layer": "nonexistent_layer"}
+                    ],
+                }
+            ]
+        }
+        f = tmp_path / "model.yaml"
+        f.write_text(yaml.dump(desc))
+        with pytest.raises(ValueError, match="nonexistent_layer"):
+            load_model_description(str(f))
+
+    def test_invalid_discrimination_method_raises(self, tmp_path):
+        desc = self._base_desc()
+        desc["optimization"] = {"discrimination_method": "magic"}
+        f = tmp_path / "model.yaml"
+        f.write_text(yaml.dump(desc))
+        with pytest.raises(ValueError, match="discrimination_method"):
+            load_model_description(str(f))
+
+    def test_invalid_discrimination_mode_raises(self, tmp_path):
+        desc = self._base_desc()
+        desc["optimization"] = {"discrimination_mode": "destroy"}
+        f = tmp_path / "model.yaml"
+        f.write_text(yaml.dump(desc))
+        with pytest.raises(ValueError, match="discrimination_mode"):
+            load_model_description(str(f))
+
+
+# ── build_alternate_experiments ──────────────────────────────────
+
+
+class TestBuildAlternateExperiments:
+    """Test building refl1d Experiments from alternate model specs."""
+
+    @pytest.fixture()
+    def q_dq(self):
+        q = np.logspace(np.log10(0.008), np.log10(0.2), 30)
+        return q, 0.025 * q
+
+    def _three_layer_desc(self):
+        return {
+            "layers": [
+                {"name": "air", "rho": 0},
+                {
+                    "name": "oxide",
+                    "rho": 5.0,
+                    "thickness": 20,
+                    "interface": 3,
+                    "fit": {"thickness": [5, 50]},
+                },
+                {"name": "Cu", "rho": 6.3},
+            ],
+        }
+
+    def test_no_alternates_returns_empty(self, q_dq):
+        q, dq = q_dq
+        desc = self._three_layer_desc()
+        result = build_alternate_experiments(desc, q, dq)
+        assert result == []
+
+    def test_remove_builds_experiment(self, q_dq):
+        q, dq = q_dq
+        desc = self._three_layer_desc()
+        desc["optimization"] = {
+            "alternate_models": [
+                {
+                    "name": "no_oxide",
+                    "modifications": [{"action": "remove", "layer": "oxide"}],
+                }
+            ]
+        }
+        alts = build_alternate_experiments(desc, q, dq)
+        assert len(alts) == 1
+        name, expt = alts[0]
+        assert name == "no_oxide"
+        _, r = expt.reflectivity()
+        assert len(r) == len(q)
+
+    def test_modify_changes_value(self, q_dq):
+        q, dq = q_dq
+        desc = self._three_layer_desc()
+        desc["optimization"] = {
+            "alternate_models": [
+                {
+                    "name": "thin_oxide",
+                    "modifications": [
+                        {
+                            "action": "modify",
+                            "layer": "oxide",
+                            "set": {"thickness": 5},
+                        }
+                    ],
+                }
+            ]
+        }
+        alts = build_alternate_experiments(desc, q, dq)
+        assert len(alts) == 1
+        name, expt = alts[0]
+        assert name == "thin_oxide"
+        _, r = expt.reflectivity()
+        assert np.all(np.isfinite(r))
+
+    def test_primary_unchanged_after_build(self, q_dq):
+        """Ensure deep-copy means primary desc is not mutated."""
+        q, dq = q_dq
+        desc = self._three_layer_desc()
+        desc["optimization"] = {
+            "alternate_models": [
+                {
+                    "name": "no_oxide",
+                    "modifications": [{"action": "remove", "layer": "oxide"}],
+                }
+            ]
+        }
+        original_layer_count = len(desc["layers"])
+        build_alternate_experiments(desc, q, dq)
+        assert len(desc["layers"]) == original_layer_count
+
+    def test_multiple_alternates(self, q_dq):
+        q, dq = q_dq
+        desc = self._three_layer_desc()
+        desc["optimization"] = {
+            "alternate_models": [
+                {
+                    "name": "no_oxide",
+                    "modifications": [{"action": "remove", "layer": "oxide"}],
+                },
+                {
+                    "name": "thick_oxide",
+                    "modifications": [
+                        {
+                            "action": "modify",
+                            "layer": "oxide",
+                            "set": {"thickness": 100},
+                        }
+                    ],
+                },
+            ]
+        }
+        alts = build_alternate_experiments(desc, q, dq)
+        assert len(alts) == 2
+        assert alts[0][0] == "no_oxide"
+        assert alts[1][0] == "thick_oxide"
+
+
+# ── build_alternate_descriptions ─────────────────────────────────
+
+
+class TestBuildAlternateDescriptions:
+    """Test building alternate description dicts without building experiments."""
+
+    def _three_layer_desc(self):
+        return {
+            "layers": [
+                {"name": "air", "rho": 0},
+                {"name": "oxide", "rho": 5.0, "thickness": 20, "interface": 3},
+                {"name": "Cu", "rho": 6.3},
+            ],
+        }
+
+    def test_no_alternates_returns_empty(self):
+        desc = self._three_layer_desc()
+        result = build_alternate_descriptions(desc)
+        assert result == []
+
+    def test_remove_produces_fewer_layers(self):
+        desc = self._three_layer_desc()
+        desc["optimization"] = {
+            "alternate_models": [
+                {
+                    "name": "no_oxide",
+                    "modifications": [{"action": "remove", "layer": "oxide"}],
+                }
+            ]
+        }
+        alt_descs = build_alternate_descriptions(desc)
+        assert len(alt_descs) == 1
+        name, alt = alt_descs[0]
+        assert name == "no_oxide"
+        assert len(alt["layers"]) == 2
+        assert all(l["name"] != "oxide" for l in alt["layers"])
+
+    def test_optimization_removed_from_alt(self):
+        desc = self._three_layer_desc()
+        desc["optimization"] = {
+            "alternate_models": [
+                {
+                    "name": "no_oxide",
+                    "modifications": [{"action": "remove", "layer": "oxide"}],
+                }
+            ]
+        }
+        _, alt = build_alternate_descriptions(desc)[0]
+        assert "optimization" not in alt

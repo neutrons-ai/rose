@@ -88,6 +88,9 @@ def _evaluate_single_realization(
     prior_entropy: float,
     mcmc_steps: int,
     entropy_method: str,
+    discriminator: object | None = None,
+    alt_mcmc_steps: int | None = None,
+    save_problem: bool = False,
 ) -> tuple[float, int, float, dict[str, Any] | None]:
     """Run one noise realization for a single parameter value.
 
@@ -103,6 +106,13 @@ def _evaluate_single_realization(
         prior_entropy: Pre-computed prior entropy (bits).
         mcmc_steps: MCMC chain length.
         entropy_method: ``"mvn"`` or ``"kdn"``.
+        discriminator: Optional ``ModelDiscriminator`` instance for
+            comparing against alternate models.
+        alt_mcmc_steps: MCMC steps for alternate models (defaults
+            to *mcmc_steps*).
+        save_problem: If ``True``, include serialised
+            ``FitProblem`` dicts in *realization_data* under
+            ``"problem"`` (and ``"alt_problems"``).
 
     Returns:
         ``(value, realization_index, info_gain, realization_data)``
@@ -123,7 +133,7 @@ def _evaluate_single_realization(
 
         designer.restore_parameter_values(original_values)
 
-        mcmc_result = mcmc_sampler.perform_mcmc(
+        mcmc_result, mcmc_problem = mcmc_sampler.perform_mcmc(
             designer.experiment.sample,
             q_values,
             noisy_reflectivity,
@@ -141,7 +151,7 @@ def _evaluate_single_realization(
         info_gain = prior_entropy - posterior_entropy
 
         z, best, low, high = _get_sld_contour(
-            designer.problem,
+            mcmc_problem,
             mcmc_result.state,
             cl=90,
             npoints=200,
@@ -150,8 +160,8 @@ def _evaluate_single_realization(
         )[0]
 
         best_p, _ = mcmc_result.state.best()
-        designer.problem.setp(best_p)
-        _, fit_reflectivity = designer.experiment.reflectivity()
+        mcmc_problem.setp(best_p)
+        _, fit_reflectivity = mcmc_problem.fitness.reflectivity()
 
         rdata: dict[str, Any] = {
             "q_values": q_values.tolist(),
@@ -165,6 +175,33 @@ def _evaluate_single_realization(
             "sld_high": high.tolist() if hasattr(high, "tolist") else list(high),
             "posterior_entropy": posterior_entropy,
         }
+
+        # Serialize the FitProblem so it can be saved to disk
+        if save_problem:
+            from bumps.serialize import serialize
+
+            rdata["problem"] = serialize(mcmc_problem)
+
+        # Model discrimination (if alternate models are configured)
+        if discriminator is not None:
+            disc_steps = alt_mcmc_steps if alt_mcmc_steps is not None else mcmc_steps
+            disc_results, alt_problems = discriminator.evaluate(
+                primary_problem=mcmc_problem,
+                primary_state=mcmc_result.state,
+                q_values=q_values,
+                noisy_reflectivity=noisy_reflectivity,
+                errors=errors,
+                dq_values=designer.simulator.dq_values,
+                mcmc_steps=disc_steps,
+                parallel=1,
+                save_problem=save_problem,
+                param_to_optimize=param_to_optimize,
+                param_value=value,
+            )
+            rdata["discrimination"] = disc_results
+            if save_problem and alt_problems:
+                rdata["alt_problems"] = alt_problems
+
         return value, realization_index, info_gain, rdata
 
     except Exception as e:
@@ -186,6 +223,9 @@ def evaluate_param(
     mcmc_steps: int,
     entropy_method: str,
     parallel: int = 0,
+    discriminator: object | None = None,
+    alt_mcmc_steps: int | None = None,
+    save_problem: bool = False,
 ) -> tuple[float, float, float, list[dict[str, Any]]]:
     """Evaluate information gain for a single parameter value.
 
@@ -196,6 +236,7 @@ def evaluate_param(
       4. Run MCMC to sample the posterior.
       5. Compute posterior entropy.
       6. Accumulate ``ΔH = H_prior − H_posterior``.
+      7. (Optional) Fit alternate models and compute discrimination.
 
     Drawing from the prior ensures the information gain is an
     expectation over unknown true values, following Treece et al.
@@ -211,6 +252,11 @@ def evaluate_param(
         prior_entropy: Pre-computed prior entropy (bits).
         mcmc_steps: MCMC chain length.
         entropy_method: ``"mvn"`` or ``"kdn"``.
+        discriminator: Optional ``ModelDiscriminator`` for alternate models.
+        alt_mcmc_steps: MCMC steps for alternate models (defaults to
+            *mcmc_steps*).
+        save_problem: If ``True``, serialize the ``FitProblem``
+            for the first realization into *realization_data*.
 
     Returns:
         ``(value, mean_info_gain, std_info_gain, realization_data)``
@@ -228,7 +274,7 @@ def evaluate_param(
     realization_gains: list[float] = []
     realization_data: list[dict[str, Any]] = []
 
-    for _ in range(realizations):
+    for ri in range(realizations):
         try:
             # Draw random "true" values from the prior for the synthetic data
             designer.draw_truth_from_prior(rng=rng)
@@ -238,7 +284,7 @@ def evaluate_param(
             # Restore original values so MCMC starts from the YAML values
             designer.restore_parameter_values(original_values)
 
-            mcmc_result = mcmc_sampler.perform_mcmc(
+            mcmc_result, mcmc_problem = mcmc_sampler.perform_mcmc(
                 designer.experiment.sample,
                 q_values,
                 noisy_reflectivity,
@@ -258,7 +304,7 @@ def evaluate_param(
 
             # SLD contour
             z, best, low, high = _get_sld_contour(
-                designer.problem,
+                mcmc_problem,
                 mcmc_result.state,
                 cl=90,
                 npoints=200,
@@ -268,27 +314,52 @@ def evaluate_param(
 
             # Best-fit reflectivity
             best_p, _ = mcmc_result.state.best()
-            designer.problem.setp(best_p)
-            _, fit_reflectivity = designer.experiment.reflectivity()
+            mcmc_problem.setp(best_p)
+            _, fit_reflectivity = mcmc_problem.fitness.reflectivity()
 
-            realization_data.append(
-                {
-                    "q_values": q_values.tolist(),
-                    "dq_values": designer.simulator.dq_values.tolist(),
-                    "reflectivity": fit_reflectivity.tolist(),
-                    "noisy_reflectivity": noisy_reflectivity.tolist(),
-                    "errors": errors.tolist(),
-                    "z": z.tolist() if hasattr(z, "tolist") else list(z),
-                    "sld_best": best.tolist()
-                    if hasattr(best, "tolist")
-                    else list(best),
-                    "sld_low": low.tolist() if hasattr(low, "tolist") else list(low),
-                    "sld_high": high.tolist()
-                    if hasattr(high, "tolist")
-                    else list(high),
-                    "posterior_entropy": posterior_entropy,
-                }
-            )
+            rdata_entry: dict[str, Any] = {
+                "q_values": q_values.tolist(),
+                "dq_values": designer.simulator.dq_values.tolist(),
+                "reflectivity": fit_reflectivity.tolist(),
+                "noisy_reflectivity": noisy_reflectivity.tolist(),
+                "errors": errors.tolist(),
+                "z": z.tolist() if hasattr(z, "tolist") else list(z),
+                "sld_best": best.tolist() if hasattr(best, "tolist") else list(best),
+                "sld_low": low.tolist() if hasattr(low, "tolist") else list(low),
+                "sld_high": high.tolist() if hasattr(high, "tolist") else list(high),
+                "posterior_entropy": posterior_entropy,
+            }
+
+            # Serialize the FitProblem for the first realization
+            if save_problem and ri == 0:
+                from bumps.serialize import serialize
+
+                rdata_entry["problem"] = serialize(mcmc_problem)
+
+            # Model discrimination (if alternate models are configured)
+            if discriminator is not None:
+                disc_steps = (
+                    alt_mcmc_steps if alt_mcmc_steps is not None else mcmc_steps
+                )
+                should_save = save_problem and ri == 0
+                disc_results, alt_problems = discriminator.evaluate(
+                    primary_problem=mcmc_problem,
+                    primary_state=mcmc_result.state,
+                    q_values=q_values,
+                    noisy_reflectivity=noisy_reflectivity,
+                    errors=errors,
+                    dq_values=designer.simulator.dq_values,
+                    mcmc_steps=disc_steps,
+                    parallel=parallel,
+                    save_problem=should_save,
+                    param_to_optimize=param_to_optimize,
+                    param_value=value,
+                )
+                rdata_entry["discrimination"] = disc_results
+                if should_save and alt_problems:
+                    rdata_entry["alt_problems"] = alt_problems
+
+            realization_data.append(rdata_entry)
 
         except Exception as e:
             logger.error("Realization failed: %s", e)
@@ -323,6 +394,9 @@ def optimize(
     realizations: int = 3,
     mcmc_steps: int = 2000,
     entropy_method: str = "kdn",
+    discriminator: object | None = None,
+    alt_mcmc_steps: int | None = None,
+    save_problem: bool = False,
 ) -> tuple[list[list[float]], list[list[dict[str, Any]]]]:
     """Run optimization sequentially.
 
@@ -333,6 +407,10 @@ def optimize(
         realizations: Noise realizations per value.
         mcmc_steps: MCMC chain length.
         entropy_method: ``"mvn"`` or ``"kdn"``.
+        discriminator: Optional ``ModelDiscriminator`` for alternate models.
+        alt_mcmc_steps: MCMC steps for alternate models.
+        save_problem: If ``True``, include serialised FitProblems
+            for the first realization of each value.
 
     Returns:
         ``(results, simulated_data)`` where *results* is a list of
@@ -366,6 +444,9 @@ def optimize(
                 mcmc_steps,
                 entropy_method,
                 parallel=0,
+                discriminator=discriminator,
+                alt_mcmc_steps=alt_mcmc_steps,
+                save_problem=save_problem,
             )
             results.append([val, gain, std])
             simulated_data.append(rdata)
@@ -385,6 +466,9 @@ def optimize_parallel(
     mcmc_steps: int = 2000,
     entropy_method: str = "kdn",
     max_workers: int | None = None,
+    discriminator: object | None = None,
+    alt_mcmc_steps: int | None = None,
+    save_problem: bool = False,
 ) -> tuple[list[list[float]], list[list[dict[str, Any]]]]:
     """Run optimization in parallel using ``ProcessPoolExecutor``.
 
@@ -397,6 +481,10 @@ def optimize_parallel(
     Args:
         max_workers: Maximum worker processes.  ``None`` (default)
             picks ``min(total_tasks, cpu_count, MAX_WORKERS)``.
+        discriminator: Optional ``ModelDiscriminator`` for alternate models.
+        alt_mcmc_steps: MCMC steps for alternate models.
+        save_problem: If ``True``, include serialised FitProblems
+            for the first realization of each value.
     """
     if param_to_optimize not in designer.all_model_parameters:
         raise ValueError(
@@ -432,6 +520,9 @@ def optimize_parallel(
                     prior_entropy,
                     mcmc_steps,
                     entropy_method,
+                    discriminator=discriminator,
+                    alt_mcmc_steps=alt_mcmc_steps,
+                    save_problem=save_problem and ri == 0,
                 )
                 futures[future] = (value, ri)
 
