@@ -504,11 +504,20 @@ def _print_ascii_graph(
             click.echo(f"{r[0]:>6.2f}   | {raw_bar} {r[1]:.3f}")
             click.echo(f"         | {eff_bar} {eff:.3f}")
     else:
+        # Find the best value to highlight it
+        best_idx = int(np.argmax(gains))
         click.echo(f"\n{'Value':<8} | Information Gain")
+        click.echo("         | \033[36m━ ΔH (bits)\033[0m  \033[33m★ = best\033[0m")
         click.echo("-" * 60)
-        for r in results:
-            bar = "#" * int(r[1] * scale)
-            click.echo(f"{r[0]:>6.2f}   | {bar} ({r[1]:.3f} ± {r[2]:.3f})")
+        for i, r in enumerate(results):
+            bar_len = int(r[1] * scale)
+            if i == best_idx:
+                bar = "\033[33m" + "━" * bar_len + "\033[0m"
+                label = f"\033[33m{r[1]:.3f} ± {r[2]:.3f} ★\033[0m"
+            else:
+                bar = "\033[36m" + "━" * bar_len + "\033[0m"
+                label = f"{r[1]:.3f} ± {r[2]:.3f}"
+            click.echo(f"{r[0]:>6.2f}   | {bar} {label}")
 
 
 # ── report ───────────────────────────────────────────────────────
