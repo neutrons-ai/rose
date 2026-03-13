@@ -1,0 +1,66 @@
+# Cu / material / THF system
+#
+# Adapted from the analyzer planner cu_thf_planner.py.
+# Sample stack (top to bottom): THF | CuOx | Cu | Ti | Si
+
+name: Cu/CuOX/ionomer/water
+description: >
+  Cu/CuOx/ionomer/water.
+
+layers:
+  - name: H2O
+    rho: 6.33
+    thickness: 0
+    interface: 16
+    fit:
+      interface: [15, 45]
+
+  - name: ionomer
+    rho: 2.0
+    thickness: 500
+    interface: 16
+    fit:
+      rho: [0.0, 3.0]
+      thickness: [500, 800]
+      interface: [15, 45]
+
+  - name: CuOx
+    rho: 5.0
+    irho: 0.0
+    thickness: 30
+    interface: 13
+    fit:
+      thickness: [10, 70]
+      rho: [4.0, 6.0]
+      interface: [10, 25]
+
+  - name: Cu
+    rho: 6.25
+    thickness: 500
+    interface: 4.6
+
+  - name: Ti
+    rho: -1.2
+    thickness: 39.5
+    interface: 9.1
+
+  - name: Si
+    rho: 2.07
+
+experiment:
+  back_reflectivity: true
+  step_interfaces: true
+  q_min: 0.008
+  q_max: 0.25
+  q_points: 60
+  dq_over_q: 0.02
+  relative_error: 0.05
+  data_file: examples/data/REFL_218386_combined_data_auto.txt
+
+optimization:
+  param: Cu thickness
+  param_values: [150,500]
+  parameters_of_interest: [ionomer rho, ionomer thickness]
+  num_realizations: 40
+  mcmc_steps: 10000
+  entropy_method: kdn

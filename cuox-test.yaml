@@ -1,0 +1,42 @@
+description: "Copper film on Ti adhesion layer on Si substrate measured in THF, with a surface copper oxide. Optimizing THF deuteration to maximize sensitivity to CuOx thickness, roughness, and SLD."
+
+layers:
+  - name: THF
+    rho: 0.183   # protonated THF; will be varied in optimization
+    thickness: 0
+    interface: 0
+
+  - name: CuOx
+    rho: 4.0
+    thickness: 30.0
+    interface: 3.0
+    fit:
+      thickness: [1.0, 100.0]      # Å
+      rho: [2.0, 7.0]              # 10⁻⁶ Å⁻²
+      interface: [0.0, 10.0]       # Å
+
+  - name: Cu
+    rho: 6.554
+    thickness: 500.0
+    interface: 2.0
+
+  - name: Ti
+    rho: -1.925
+    thickness: 50.0
+    interface: 2.0
+
+  - name: Si
+    rho: 2.074
+    thickness: 0
+    interface: 0
+
+optimization:
+  param: "THF rho"
+  param_values: [0.183, 1.279, 2.374, 3.470, 4.565, 5.661]
+  parameters_of_interest:
+    - "CuOx thickness"
+    - "CuOx interface"
+    - "CuOx rho"
+  num_realizations: 5
+  mcmc_steps: 3000
+  entropy_method: "kdn"

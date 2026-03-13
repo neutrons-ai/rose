@@ -564,8 +564,7 @@ def _get_alcf_token() -> str:
 
     Resolution order:
       1. ``ALCF_ACCESS_TOKEN`` environment variable.
-      2. ``globus_sdk`` — reuses cached / refresh tokens.
-      3. Run ``inference_auth_token.py get_access_token`` (subprocess).
+      2. Run ``inference_auth_token.py get_access_token`` (subprocess).
 
     Raises:
         RuntimeError: If no token can be obtained.
@@ -578,40 +577,7 @@ def _get_alcf_token() -> str:
     if token:
         return token
 
-    # 2. globus_sdk
-    try:
-        import globus_sdk
-
-        app_name = os.environ.get("GLOBUS_APP_NAME", "inference_app")
-        client_id = os.environ.get(
-            "GLOBUS_AUTH_CLIENT_ID",
-            "REDACTED_GLOBUS_CLIENT_ID",
-        )
-        gateway_id = os.environ.get(
-            "GLOBUS_GATEWAY_CLIENT_ID",
-            "REDACTED_GLOBUS_GATEWAY_ID",
-        )
-        scope = os.environ.get(
-            "GLOBUS_GATEWAY_SCOPE",
-            f"https://auth.globus.org/scopes/{gateway_id}/action_all",
-        )
-        app = globus_sdk.UserApp(
-            app_name,
-            client_id=client_id,
-            scope_requirements={gateway_id: [scope]},
-            config=globus_sdk.GlobusAppConfig(
-                request_refresh_tokens=True,
-            ),
-        )
-        auth = app.get_authorizer(gateway_id)
-        auth.ensure_valid_token()
-        return auth.access_token
-    except ImportError:
-        pass
-    except Exception:
-        pass
-
-    # 3. subprocess fallback
+    # 2. subprocess — use the provider's inference_auth_token.py script
     try:
         result = subprocess.run(
             [sys.executable, "inference_auth_token.py", "get_access_token"],
@@ -629,8 +595,7 @@ def _get_alcf_token() -> str:
     raise RuntimeError(
         "Could not obtain ALCF access token. Options:\n"
         "  1. Set ALCF_ACCESS_TOKEN in environment or .env\n"
-        "  2. Install globus_sdk and authenticate\n"
-        "  3. Download the auth script:\n"
+        "  2. Download the auth script:\n"
         f"     wget {_ALCF_AUTH_SCRIPT_URL}\n"
         "     python inference_auth_token.py authenticate"
     )
