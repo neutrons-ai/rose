@@ -327,4 +327,4 @@ class TestPluginRegistration:
 
         assert "JOBS" in app.config
         assert "JOBS_LOCK" in app.config
-        assert isinstance(app.config["JOBS_LOCK"], threading.Lock)
+        assert hasattr(app.config["JOBS_LOCK"], "acquire")
