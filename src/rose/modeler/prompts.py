@@ -74,26 +74,33 @@ Rules:
 - Use the SLD reference table below for `rho` values.
 - Mark unknown/uncertain parameters under `fit` with realistic min/max bounds.
 
-#### Reflection geometry
+#### Layer ordering convention
 
-The measurement environment determines the layer stack ordering:
+The layer order in the YAML file is **always** from the free surface
+(air, vacuum, or liquid environment) down to the substrate, regardless
+of the beam direction.  Specifically:
 
-- **Front reflection** (beam enters from above the sample):
-  First layer is **air or vacuum** (rho ≈ 0), last layer is the substrate.
-  Thin films are ordered from the air side down to the substrate.
-  **Default when the user says "measured in air" or "in vacuum".**
+- The **first** layer is the free surface medium:
+  - **Air or vacuum** (rho ≈ 0) when measured in air/vacuum.
+  - **Liquid** (D₂O, H₂O, THF, etc.) when measured in a liquid.
+- The **last** layer is the substrate (e.g. silicon, quartz).
+- Thin films are listed between, ordered from the free-surface side
+  down toward the substrate.
 
-- **Back reflection** (beam enters through the substrate):
-  First layer is the **liquid** (D₂O, H₂O, THF, etc.), last layer is
-  the substrate (e.g. silicon). Thin films are ordered from the liquid
-  side down to the substrate — i.e. the film closest to the liquid
-  is listed first, the film closest to Si is listed last.
-  **Default when the user mentions a liquid environment** (e.g.
-  "measured in D₂O", "immersed in water", "in THF solvent").
+**The beam direction does NOT affect layer ordering.**  Whether the
+beam enters from the substrate side (back reflection) or from the
+free-surface side (front reflection), the YAML layer order is the same:
+free surface first, substrate last.
 
-If the user explicitly states the beam direction (e.g. "beam enters
-from the silicon side"), follow their instruction regardless of the
-defaults above.
+Example — copper film on Si, measured in THF, beam from Si side:
+```
+layers:
+  - name: THF        # free surface (first)
+  - name: CuOx
+  - name: Cu
+  - name: Ti
+  - name: Si         # substrate (last)
+```
 
 ### experiment (optional)
 Instrument configuration:
@@ -122,10 +129,10 @@ What to optimise:
 ## Instructions
 
 1. Read the user's description carefully.
-2. Determine the reflection geometry: if the sample is measured against
-   a liquid, assume **back reflection** (liquid first, substrate last);
-   if measured in air or vacuum, assume **front reflection** (air first,
-   substrate last). Override if the user explicitly states the beam direction.
+2. Determine the layer ordering: the first layer is always the free
+   surface medium (liquid when measured in liquid, air/vacuum otherwise)
+   and the last layer is always the substrate.  The beam direction does
+   NOT change this ordering.
 3. Identify the sample structure (substrate, thin films, fronting medium).
 4. Build a layer stack with correct SLD values from the table above.
 5. Set `fit` ranges for parameters that are uncertain or to be explored.
