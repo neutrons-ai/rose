@@ -349,9 +349,20 @@ src/rose/planner/
 ### Output
 - JSON: `"discrimination"` key with `alternate_models`, `method`, `mode`, and `per_value` array (each with `mean_model_prob`, `mean_delta_metric`, `info_gain`, `mean_model_prob` scalar, optionally `effective_info_gain`)
 - Plot: `model_discrimination.png` — P(primary|data) per alternate on left axis, ΔH on right axis. Penalize mode also shows effective ΔH.
+- Plot: `information_gain.png` — in penalize mode, overlays faded-blue raw ΔH (with error bars) and bold-green penalized ΔH. Standard mode unchanged.
+- CLI table: penalize mode adds `Eff. ΔH` column alongside `Value`, `ΔH (bits)`, `± std`, `P(primary)`.
+- ASCII graph: penalize mode shows blue `━` bars for raw ΔH and green `━` bars for penalized ΔH (ANSI colours).
 
 ### Test Coverage
-- 30 new tests (168 total): `test_model_discriminator.py` (model_probability, combine_scores, ModelDiscriminator construction), `test_model_loader.py` (alternate model validation: valid/invalid actions, missing name, unknown layer, bad discrimination_method/mode; build_alternate_experiments: remove, modify, deep-copy safety, multiple alternates)
+- 176 total tests, all passing
+- Model discrimination tests in `test_model_discriminator.py`: model_probability, combine_scores, ModelDiscriminator construction, `_set_param_on_sample` (3 tests)
+- Alternate model validation tests in `test_model_loader.py`: valid/invalid actions, missing name, unknown layer, bad discrimination_method/mode; build_alternate_experiments: remove, modify, deep-copy safety, multiple alternates
+
+### Parameter-on-alternates fix (2026-03-12)
+- **Bug**: `designer.set_parameter_to_optimize(param, value)` only sets the parameter on the primary model. Alternate experiments (built once at startup from YAML modifications) retain their YAML default values. When the optimizer sweeps `THF rho` from 0 to 7, the alternate model always uses `THF rho = 5.8` (the YAML initial), making discrimination results wrong.
+- **Fix**: `_set_param_on_sample(experiment, name, value)` helper walks the `FitProblem(experiment)._models[0].parameters()["sample"]["layers"]` tree to find a `Parameter` object matching `name` (format: `"{layer_name} {property}"`) and directly sets `sub_param.value = value`. Since `FitProblem(experiment)` references the same `Parameter` objects as the experiment's sample, the change propagates to the actual experiment used by `perform_mcmc()`.
+- **Graceful handling**: Returns `False` (with `logger.debug`) when the named parameter doesn't exist in the alternate (e.g., after a `remove` action deletes the layer containing that parameter). This is expected and correct — the alternate's structure simply doesn't include that layer.
+- **Call site**: `ModelDiscriminator.evaluate()` accepts `param_to_optimize: str | None` and `param_value: float | None`. Before each alternate's MCMC run, calls `_set_param_on_sample()` to apply the current optimisation condition.
 
 ## FitProblem Serialization (bumps/refl1d)
 
@@ -455,3 +466,14 @@ When `--save-problems` is passed to `rose optimize`:
 3. Alternate model problems are serialized into `rdata["alt_problems"]` via `ModelDiscriminator.evaluate()`.
 4. The CLI writes these as JSON files to `{output_dir}/problems/step_{i}_value_{v}_{label}.json`.
 5. Files can be reloaded via `bumps.serialize.load_file(path)` for inspection or further fitting.
+
+## Removed Features
+
+### `export_model_script()` (removed 2026-03-12)
+- Originally generated standalone refl1d Python model files from YAML descriptions for human inspection.
+- Replaced by `bumps.serialize` which provides full `FitProblem` JSON serialization with actual fitted data, parameters, and state.
+- The `_py_varname()` helper was also removed as it was only used by `export_model_script()`.
+
+### `export_problem_script()` (removed 2026-03-12)
+- Originally generated Python scripts with embedded numpy arrays for data.
+- Replaced by `bumps.serialize` (see above) which captures exact FitProblem objects.

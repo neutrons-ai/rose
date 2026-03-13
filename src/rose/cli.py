@@ -339,7 +339,23 @@ def optimize(
     click.echo(f"\n{'=' * 55}")
     click.echo("OPTIMISATION RESULTS")
     click.echo(f"{'=' * 55}")
-    if discrimination_summary:
+    if discrimination_summary and disc_mode == "penalize":
+        click.echo(
+            f"{'Value':>10}   {'ΔH (bits)':>12}   {'± std':>10}"
+            f"   {'P(primary)':>12}   {'Eff. ΔH':>10}"
+        )
+        click.echo("-" * 75)
+        for i, r in enumerate(results):
+            probs = discrimination_summary[i]["mean_model_prob"]
+            avg_prob = (
+                float(np.nanmean(list(probs.values()))) if probs else float("nan")
+            )
+            eff = discrimination_summary[i].get("effective_info_gain", float("nan"))
+            click.echo(
+                f"{r[0]:>10.3f}   {r[1]:>12.4f}   {r[2]:>10.4f}"
+                f"   {avg_prob:>12.3f}   {eff:>10.4f}"
+            )
+    elif discrimination_summary:
         click.echo(
             f"{'Value':>10}   {'ΔH (bits)':>12}   {'± std':>10}   {'P(primary)':>12}"
         )
@@ -419,7 +435,12 @@ def optimize(
     click.echo(f"Plots saved to: {output_dir}/")
 
     # ASCII graph
-    _print_ascii_graph(results)
+    eff_gains_for_graph = None
+    if discrimination_summary and disc_mode == "penalize":
+        eff_gains_for_graph = [
+            d.get("effective_info_gain", float("nan")) for d in discrimination_summary
+        ]
+    _print_ascii_graph(results, effective_gains=eff_gains_for_graph)
 
     # Export serialised FitProblem JSON files (first realization per step)
     if save_problems:
@@ -456,17 +477,38 @@ def optimize(
     return result_dict  # for programmatic use
 
 
-def _print_ascii_graph(results: list[list[float]]) -> None:
-    """Print a simple ASCII bar chart of information gain."""
+def _print_ascii_graph(
+    results: list[list[float]],
+    effective_gains: list[float] | None = None,
+) -> None:
+    """Print a simple ASCII bar chart of information gain.
+
+    When *effective_gains* is provided (penalize mode), both raw and
+    penalized bars are shown with ANSI colours.
+    """
     gains = [r[1] for r in results]
-    max_gain = max(gains) if gains else 1.0
+    all_vals = gains + (effective_gains or [])
+    max_gain = max(v for v in all_vals if not np.isnan(v)) if all_vals else 1.0
     scale = 40 / max_gain if max_gain > 0 else 1.0
 
-    click.echo(f"\n{'Value':<8} | Information Gain")
-    click.echo("-" * 60)
-    for r in results:
-        bar = "#" * int(r[1] * scale)
-        click.echo(f"{r[0]:>6.2f}   | {bar} ({r[1]:.3f} ± {r[2]:.3f})")
+    if effective_gains is not None:
+        click.echo(f"\n{'Value':<8} | Information Gain")
+        click.echo("         | \033[34m━ Raw ΔH\033[0m  \033[32m━ Penalized ΔH\033[0m")
+        click.echo("-" * 65)
+        for i, r in enumerate(results):
+            raw_len = int(r[1] * scale)
+            eff = effective_gains[i] if not np.isnan(effective_gains[i]) else 0.0
+            eff_len = int(eff * scale)
+            raw_bar = "\033[34m" + "━" * raw_len + "\033[0m"
+            eff_bar = "\033[32m" + "━" * eff_len + "\033[0m"
+            click.echo(f"{r[0]:>6.2f}   | {raw_bar} {r[1]:.3f}")
+            click.echo(f"         | {eff_bar} {eff:.3f}")
+    else:
+        click.echo(f"\n{'Value':<8} | Information Gain")
+        click.echo("-" * 60)
+        for r in results:
+            bar = "#" * int(r[1] * scale)
+            click.echo(f"{r[0]:>6.2f}   | {bar} ({r[1]:.3f} ± {r[2]:.3f})")
 
 
 # ── report ───────────────────────────────────────────────────────

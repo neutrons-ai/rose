@@ -53,8 +53,8 @@ optimization:
   param: THF rho
   param_values: [0,1,2,3,4,5,6,7]
   parameters_of_interest: [CuOx rho, CuOx thickness]
-  num_realizations: 15
-  mcmc_steps: 300
+  num_realizations: 25
+  mcmc_steps: 5000
   entropy_method: kdn
 
   # Model discrimination: is the CuOx layer real, or just

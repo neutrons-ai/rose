@@ -64,12 +64,59 @@ def make_report(
     info_gains = [r[1] for r in results]
     std_gains = [r[2] for r in results] if len(results[0]) > 2 else None
 
+    disc_data = result_dict.get("discrimination")
+    disc_mode = disc_data.get("mode", "report") if disc_data else "report"
+    eff_gains = None
+    if disc_data and disc_mode == "penalize" and disc_data.get("per_value"):
+        eff_gains = [
+            pv.get("effective_info_gain", ig)
+            for pv, ig in zip(disc_data["per_value"], info_gains)
+        ]
+
     fig, ax = plt.subplots(dpi=150, figsize=(6, 4))
     fig.subplots_adjust(left=0.15, right=0.95, top=0.9, bottom=0.17)
-    if std_gains:
-        ax.errorbar(param_values, info_gains, yerr=std_gains, marker="o", capsize=3)
+    if eff_gains is not None:
+        # Show both raw (faded) and penalized (bold) on the same axes
+        if std_gains:
+            ax.errorbar(
+                param_values,
+                info_gains,
+                yerr=std_gains,
+                marker="o",
+                capsize=3,
+                color="tab:blue",
+                alpha=0.35,
+                label="Raw ΔH",
+            )
+        else:
+            ax.plot(
+                param_values,
+                info_gains,
+                marker="o",
+                color="tab:blue",
+                alpha=0.35,
+                label="Raw ΔH",
+            )
+        ax.plot(
+            param_values,
+            eff_gains,
+            marker="^",
+            color="tab:green",
+            linewidth=2,
+            label="Penalized ΔH",
+        )
+        ax.legend(frameon=False, fontsize=9)
     else:
-        ax.plot(param_values, info_gains, marker="o")
+        if std_gains:
+            ax.errorbar(
+                param_values,
+                info_gains,
+                yerr=std_gains,
+                marker="o",
+                capsize=3,
+            )
+        else:
+            ax.plot(param_values, info_gains, marker="o")
     ax.set_xlabel("Parameter Value", fontsize=13)
     ax.set_ylabel("Information Gain (bits)", fontsize=13)
     ax.set_title(f"Optimization: {result_dict.get('parameter', '')}", fontsize=13)

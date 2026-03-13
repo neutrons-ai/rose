@@ -157,6 +157,10 @@ overrides the YAML value.
 | `num_realizations` | no | 3 | Noise realisations per candidate value (1–100) |
 | `mcmc_steps` | no | 2000 | MCMC steps after burn in (100–100,000) |
 | `entropy_method` | no | `kdn` | `mvn` (multivariate normal) or `kdn` (kernel density) |
+| `alternate_models` | no | `[]` | List of alternate model hypotheses (see below) |
+| `discrimination_method` | no | `bic` | `bic` or `evidence` (harmonic mean estimator) |
+| `discrimination_mode` | no | `report` | `report` (side-by-side) or `penalize` (effective ΔH) |
+| `alt_mcmc_steps` | no | same as `mcmc_steps` | Separate MCMC step count for alternate model fits |
 
 ### JSON alternative
 
@@ -236,13 +240,13 @@ This will:
 
 ### CLI options
 
-The few remaining CLI options control output and runtime behaviour:
-
 | Option | Default | Description |
 |--------|---------|-------------|
 | `--data-file` | *(none)* | 4-column measurement file — overrides Q-grid from YAML |
 | `--output-dir` | `results` | Where to save JSON and plots |
 | `--parallel / --sequential` | parallel | Use multiprocessing or run serially |
+| `--workers N` | auto | Max parallel workers (default: min(tasks, CPUs, 8)) |
+| `--save-problems` | off | Export refl1d FitProblem JSON files via `bumps.serialize` |
 | `--verbose` | off | Debug-level logging |
 
 Example with overrides:
@@ -255,6 +259,8 @@ rose optimize examples/models/layer_a_on_b.yaml \
 ```
 
 ### Understanding the output
+
+With no model discrimination:
 
 ```
 =======================================================
@@ -271,11 +277,33 @@ Optimal value: 40.000
 Max ΔH:        2.3456 ± 0.2345 bits
 ```
 
+With model discrimination in **penalize** mode:
+
+```
+=======================================================
+OPTIMISATION RESULTS
+=======================================================
+     Value      ΔH (bits)        ± std   P(primary)     Eff. ΔH
+---------------------------------------------------------------------------
+     0.000         3.1234       0.3100        0.520     1.6242
+     3.000         2.5678       0.2500        0.890     2.2853
+     6.000         1.8765       0.1800        0.970     1.8202
+
+Optimal value (penalized): 3.000
+Effective ΔH:  2.2853 bits
+Raw ΔH:        2.5678 ± 0.2500 bits
+```
+
 - **ΔH (bits)** — expected information gain: how much the posterior
-  distribution narrows compared to the prior. Higher is better.
-- **± std** — standard deviation across noise realisations. Large
+  distribution narrows compared to the prior.  Higher is better.
+- **± std** — standard deviation across noise realisations.  Large
   values indicate sensitivity to noise.
-- **Optimal value** — the candidate that maximises average ΔH.
+- **P(primary)** — average probability that the data support the
+  primary model over all alternates (only with `alternate_models`).
+- **Eff. ΔH** — penalized information gain: ΔH × P(primary)
+  (only in `penalize` mode).
+- **Optimal value** — the candidate that maximises average ΔH
+  (or effective ΔH in penalize mode).
 
 ### Output files
 
@@ -283,10 +311,12 @@ All files are written to `--output-dir` (default: `results/`):
 
 | File | Description |
 |------|-------------|
-| `optimization_results.json` | Full results including per-realisation SLD and reflectivity data |
-| `information_gain.png` | Bar chart of ΔH vs. parameter value |
-| `simulated_data_<value>.png` | Reflectivity curves for each candidate value |
-| `sld_contour_<value>.png` | SLD profile contour plots |
+| `optimization_results.json` | Full results including per-realisation SLD, reflectivity, and discrimination data |
+| `information_gain.png` | ΔH vs. parameter value (with penalized ΔH overlay in penalize mode) |
+| `simulated_data_<i>.png` | Reflectivity curves for each candidate value |
+| `sld_contours_<i>.png` | SLD profile contour plots with 90% confidence bands |
+| `model_discrimination.png` | P(primary) + ΔH twin-axis plot (if alternates defined) |
+| `problems/*.json` | Serialised refl1d FitProblem files (with `--save-problems`) |
 
 ---
 
@@ -353,3 +383,103 @@ the information gain metric on exactly the quantity you want to measure.
 - Set `dq_over_q` to match your instrument's resolution (e.g. `0.02`
   for 2% dQ/Q) and `relative_error` for the expected counting-statistics
   noise level.
+
+---
+
+## Model discrimination
+
+Information gain alone can be misleading — a measurement condition may
+yield high ΔH for the primary model but fail to distinguish it from
+a simpler alternative.  Model discrimination addresses this.
+
+### Defining alternate models
+
+Alternate models are defined inline in the `optimization` section as
+a list of modifications applied to the primary layer stack:
+
+```yaml
+optimization:
+  param: THF rho
+  param_values: [0, 1, 2, 3, 4, 5, 6, 7]
+  parameters_of_interest: [CuOx rho, CuOx thickness]
+  num_realizations: 25
+  mcmc_steps: 5000
+
+  discrimination_method: bic
+  discrimination_mode: penalize
+
+  alternate_models:
+    - name: no_oxide
+      modifications:
+        - action: remove
+          layer: CuOx
+        - action: modify
+          layer: Cu
+          fit:
+            thickness: [500, 600]
+        - action: modify
+          layer: THF
+          fit:
+            interface: [15, 100]
+```
+
+### Modification actions
+
+| Action | Required fields | Description |
+|--------|----------------|-------------|
+| `remove` | `layer` | Remove a layer from the stack |
+| `modify` | `layer`, optional `set` and `fit` | Change property values or fit ranges on an existing layer |
+| `add` | `layer` (dict), `after` or `before` | Insert a new layer at a specified position |
+
+The `set` dict changes fixed values (e.g. `set: {interface: 15}`).
+The `fit` dict adds or changes fit ranges (e.g. `fit: {interface: [3, 40]}`).
+
+### Discrimination methods
+
+- **BIC** (`bic`): Bayesian Information Criterion.  Computes
+  ΔBIC = BIC(alternate) − BIC(primary); positive values favour the
+  primary.  Fast — no additional MCMC runs beyond those already done.
+- **Evidence** (`evidence`): Harmonic mean estimator of the marginal
+  likelihood from the DREAM chains.  Computes log Bayes factor.
+  Higher variance but doesn't assume model nesting.
+
+Both produce $P(\text{primary} | \text{data})$ via a logistic transform.
+
+### Discrimination modes
+
+- **report**: ΔH and P(primary) are displayed side-by-side.  The optimal
+  value is still chosen by raw ΔH.  Use this when you want to see both
+  metrics but make your own judgement.
+- **penalize**: Computes an effective information gain:
+  $\Delta H_{\text{eff}} = \Delta H \times \bar{P}(\text{primary})$.
+  Conditions where the primary can't be distinguished from alternatives
+  get their gain reduced.  The optimal value is chosen by max effective ΔH.
+
+### Output with discrimination
+
+When alternates are configured, the results JSON contains a
+`"discrimination"` key with per-value metrics.  The report generates
+a `model_discrimination.png` plot showing P(primary) on the left axis
+and information gain on the right axis.  In penalize mode, the
+`information_gain.png` plot overlays both raw and penalized ΔH curves.
+
+### Saving FitProblem files
+
+Pass `--save-problems` to export the refl1d `FitProblem` objects used
+during MCMC as JSON files (via `bumps.serialize`).  These capture the
+exact model, data, and parameter state used for fitting:
+
+```bash
+rose optimize examples/models/cu_thf.yaml --save-problems
+```
+
+Files are saved to `{output-dir}/problems/`:
+- `step_0_value_0.0_primary.json` — primary model
+- `step_0_value_0.0_no_oxide.json` — alternate model(s)
+
+Reload with:
+
+```python
+from bumps.serialize import load_file
+problem = load_file("results/problems/step_0_value_0.0_primary.json")
+```
