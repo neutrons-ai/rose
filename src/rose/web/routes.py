@@ -618,10 +618,9 @@ def _run_plan_job(
     base_url = os.environ.get("LLM_BASE_URL") or None
     max_tokens = int(os.environ.get("LLM_MAX_TOKENS", "4096"))
 
+    # For ALCF, use the access token as the API key
     if provider == "alcf" and not api_key:
-        from rose.cli import _get_alcf_token
-
-        api_key = _get_alcf_token()
+        api_key = os.environ.get("ALCF_ACCESS_TOKEN")
 
     yaml_text = generate_model_yaml(
         description,
