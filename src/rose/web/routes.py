@@ -611,16 +611,11 @@ def _run_plan_job(
     from rose.modeler.llm_generator import generate_model_yaml
 
     # Read LLM config from environment
-    provider = os.environ.get("LLM_PROVIDER", "openai").lower()
     model_name = os.environ.get("LLM_MODEL", "gpt-4o")
     temperature = float(os.environ.get("LLM_TEMPERATURE", "0.2"))
     api_key = os.environ.get("LLM_API_KEY") or os.environ.get("OPENAI_API_KEY")
     base_url = os.environ.get("LLM_BASE_URL") or None
     max_tokens = int(os.environ.get("LLM_MAX_TOKENS", "4096"))
-
-    # For ALCF, use the access token as the API key
-    if provider == "alcf" and not api_key:
-        api_key = os.environ.get("ALCF_ACCESS_TOKEN")
 
     yaml_text = generate_model_yaml(
         description,

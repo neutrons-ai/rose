@@ -45,7 +45,7 @@ def generate_model_yaml(
         max_retries: Number of retry attempts on validation failure.
         api_key: Optional API key override (default reads from env).
         base_url: Optional base URL for OpenAI-compatible endpoints
-            (ALCF, Ollama, vLLM, etc.).
+            (Ollama, vLLM, ALCF, etc.).
         max_tokens: Maximum output tokens per LLM call (default 4096).
 
     Returns:

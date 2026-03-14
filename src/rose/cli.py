@@ -547,44 +547,23 @@ def report(result_file: str, output_dir: str) -> None:
 
 # ── check-llm ────────────────────────────────────────────────────
 
-# ALCF inference endpoint base URLs per cluster
-_ALCF_CLUSTER_URLS: dict[str, str] = {
-    "sophia": "https://inference-api.alcf.anl.gov/resource_server/sophia/vllm/v1",
-    "metis": "https://inference-api.alcf.anl.gov/resource_server/metis/api/v1",
-}
-
 
 def _get_llm_config() -> dict:
     """Read LLM configuration from environment variables.
 
-    Supports providers: ``openai``, ``alcf``, ``local``.
-
-    When ``LLM_PROVIDER=alcf``, the base URL defaults to the ALCF
-    Sophia endpoint and the API key is read from ``ALCF_ACCESS_TOKEN``.
+    Supports any OpenAI-compatible endpoint (OpenAI, ALCF, Ollama,
+    vLLM, LM Studio, etc.) via ``LLM_BASE_URL``.
 
     Returns:
         Dict with keys: provider, model, api_key, base_url,
-        temperature, max_tokens, alcf_cluster.
+        temperature, max_tokens.
     """
     provider = os.environ.get("LLM_PROVIDER", "openai")
     model = os.environ.get("LLM_MODEL", "gpt-4o")
     api_key = os.environ.get("LLM_API_KEY") or os.environ.get("OPENAI_API_KEY") or ""
     base_url = os.environ.get("LLM_BASE_URL", "")
-    temperature = os.environ.get("LLM_TEMPERATURE", "0.2")
-    max_tokens = os.environ.get("LLM_MAX_TOKENS", "4096")
-    alcf_cluster = ""
-
-    # ALCF-specific defaults
-    if provider == "alcf":
-        alcf_cluster = os.environ.get("ALCF_CLUSTER", "sophia").lower()
-        # Use ALCF_ACCESS_TOKEN as the API key
-        if not api_key or api_key == "sk-...":
-            api_key = os.environ.get("ALCF_ACCESS_TOKEN", "")
-        if not base_url:
-            base_url = _ALCF_CLUSTER_URLS.get(
-                alcf_cluster,
-                _ALCF_CLUSTER_URLS["sophia"],
-            )
+    temperature = os.environ.get("LLM_TEMPERATURE", "0.0")
+    max_tokens = os.environ.get("LLM_MAX_TOKENS", "48000")
 
     return {
         "provider": provider,
@@ -593,7 +572,6 @@ def _get_llm_config() -> dict:
         "base_url": base_url,
         "temperature": temperature,
         "max_tokens": max_tokens,
-        "alcf_cluster": alcf_cluster,
     }
 
 
@@ -616,14 +594,16 @@ def check_llm(no_test: bool, output_json: bool) -> None:
     are present, and (unless --no-test) sends a tiny test prompt to
     verify the connection works end-to-end.
 
+    Any OpenAI-compatible endpoint (OpenAI, ALCF, Ollama, vLLM, etc.)
+    is supported via LLM_BASE_URL.
+
     \b
     Environment variables used:
-        LLM_PROVIDER       openai | alcf | local  (default: openai)
-        LLM_MODEL          model name             (default: gpt-4o)
-        LLM_API_KEY        API key (or OPENAI_API_KEY)
-        LLM_BASE_URL       base URL (for local / custom endpoints)
-        LLM_TEMPERATURE    sampling temperature   (default: 0.2)
-        ALCF_ACCESS_TOKEN  Globus token (when provider=alcf)
+        LLM_PROVIDER     openai | local  (default: openai)
+        LLM_MODEL        model name      (default: gpt-4o)
+        LLM_API_KEY      API key (or OPENAI_API_KEY)
+        LLM_BASE_URL     base URL for custom / local endpoints
+        LLM_TEMPERATURE  sampling temperature  (default: 0.0)
 
     \b
     Examples:
@@ -634,7 +614,6 @@ def check_llm(no_test: bool, output_json: bool) -> None:
     import sys
 
     config = _get_llm_config()
-    is_alcf = config["provider"] == "alcf"
     has_key = bool(config["api_key"])
     creds_ok = has_key or config["provider"] == "local"
 
@@ -656,14 +635,7 @@ def check_llm(no_test: bool, output_json: bool) -> None:
         if not deps_ok:
             ok, message = False, deps_msg
         elif not creds_ok:
-            ok, message = (
-                False,
-                (
-                    "ALCF_ACCESS_TOKEN not set"
-                    if is_alcf
-                    else "API key not set"
-                ),
-            )
+            ok, message = False, "API key not set"
         elif no_test:
             ok, message = True, "Credentials present (live test skipped)"
         else:
@@ -679,8 +651,6 @@ def check_llm(no_test: bool, output_json: bool) -> None:
             "ok": ok,
             "message": message,
         }
-        if is_alcf:
-            result["alcf_cluster"] = config["alcf_cluster"]
         click.echo(json.dumps(result, indent=2))
         sys.exit(0 if ok else 1)
 
@@ -692,19 +662,10 @@ def check_llm(no_test: bool, output_json: bool) -> None:
     click.echo(f"    Provider:    {config['provider']}")
     click.echo(f"    Model:       {config['model']}")
 
-    if is_alcf:
-        token_display = (
-            click.style("✓ set", fg="green")
-            if has_key
-            else click.style("NOT SET", fg="red")
-        )
-        click.echo(f"    Token:       {token_display}")
-        click.echo(f"    Cluster:     {config['alcf_cluster']}")
+    if has_key:
+        click.echo(f"    API key:     {_mask_key(config['api_key'])}")
     else:
-        if has_key:
-            click.echo(f"    API key:     {_mask_key(config['api_key'])}")
-        else:
-            click.echo(f"    API key:     {click.style('NOT SET', fg='red')}")
+        click.echo(f"    API key:     {click.style('NOT SET', fg='red')}")
 
     if config["base_url"]:
         click.echo(f"    Base URL:    {config['base_url']}")
@@ -717,24 +678,12 @@ def check_llm(no_test: bool, output_json: bool) -> None:
         sys.exit(1)
 
     if not creds_ok:
-        if is_alcf:
-            click.echo(
-                click.style("  ✗ ALCF_ACCESS_TOKEN not set", fg="red", bold=True)
-            )
-            click.echo()
-            click.echo("    Set the ALCF access token:")
-            click.echo("      export ALCF_ACCESS_TOKEN=<your-token>")
-            click.echo("    or add to .env:")
-            click.echo("      LLM_PROVIDER=alcf")
-            click.echo("      ALCF_ACCESS_TOKEN=<your-token>")
-        else:
-            click.echo(click.style("  ✗ API key not set", fg="red", bold=True))
-            click.echo()
-            click.echo("    Set an API key:")
-            click.echo("      export LLM_API_KEY=<your-key>")
-            click.echo("    or add to .env:")
-            click.echo(f"      LLM_PROVIDER={config['provider']}")
-            click.echo("      LLM_API_KEY=<your-key>")
+        click.echo(click.style("  ✗ API key not set", fg="red", bold=True))
+        click.echo()
+        click.echo("    Set an API key:")
+        click.echo("      export LLM_API_KEY=<your-key>")
+        click.echo("    or add to .env:")
+        click.echo("      LLM_API_KEY=<your-key>")
         click.echo()
         sys.exit(1)
 
@@ -751,19 +700,6 @@ def check_llm(no_test: bool, output_json: bool) -> None:
         click.echo(click.style(" ✓ Connected", fg="green"))
     else:
         click.echo(click.style(f" ✗ {msg}", fg="red"))
-        if is_alcf and (
-            "token" in msg.lower()
-            or "401" in msg
-            or "unauthorized" in msg.lower()
-        ):
-            click.echo()
-            click.echo(
-                click.style(
-                    "    ALCF tokens expire periodically. "
-                    "Refresh ALCF_ACCESS_TOKEN in .env or environment.",
-                    fg="yellow",
-                )
-            )
     click.echo()
     sys.exit(0 if ok else 1)
 
